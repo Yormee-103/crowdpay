@@ -14,18 +14,40 @@ const { sendAlert } = require('./services/alerting');
 const { assertNoLegacyPlaintextUserWalletSecrets } = require('./services/walletSecrets');
 const swaggerUi = require('swagger-ui-express');
 const swaggerJsdoc = require('swagger-jsdoc');
+const rateLimit = require('express-rate-limit');
 
 const app = express();
 
 app.use(helmet());
-app.use(cors({
-  origin: process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',').map(s => s.trim()) : '*'
-}));
+app.use(cors({ origin: process.env.FRONTEND_URL || 'http://localhost:5173' }));
 app.use(express.json({ limit: '50kb' }));
 app.use(cookieParser());
 app.use(requestIdMiddleware);
 app.use(requestLogger);
 app.use(normalizeErrorResponse);
+
+const isTest = process.env.NODE_ENV === 'test';
+const globalApiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: isTest ? 100000 : 100,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests, please try again later.' },
+  skip: (req) => {
+    if (isTest) return true;
+    const isPost = req.method === 'POST';
+    const p = req.path || '';
+    if (!isPost) return false;
+    return (
+      p === '/auth/register' ||
+      p === '/users/register' ||
+      p === '/auth/login' ||
+      p === '/users/login' ||
+      p === '/contributions'
+    );
+  },
+});
+app.use('/api', globalApiLimiter);
 
 const openApiSpec = swaggerJsdoc({
   definition: {

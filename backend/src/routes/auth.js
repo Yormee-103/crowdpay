@@ -27,12 +27,22 @@ const {
 const REFRESH_TOKEN_COOKIE_NAME = 'cp_refresh_token';
 const REFRESH_TOKEN_COOKIE_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
 
-const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 10,
+const isTest = process.env.NODE_ENV === 'test';
+const registerLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: isTest ? 100000 : 10,
   message: { error: 'Too many requests, please try again later.' },
   standardHeaders: true,
   legacyHeaders: false,
+  skip: () => isTest,
+});
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: isTest ? 100000 : 20,
+  message: { error: 'Too many requests, please try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: () => isTest,
 });
 
 function hashToken(token) {
@@ -117,7 +127,7 @@ async function rotateRefreshToken(oldToken, userId) {
   return createRefreshToken(userId);
 }
 
-router.post('/register', authLimiter, registerValidation, validateRequest, async (req, res) => {
+router.post('/register', registerLimiter, registerValidation, validateRequest, async (req, res) => {
   /**
    * @openapi
    * /api/auth/register:
@@ -240,7 +250,7 @@ router.post('/register', authLimiter, registerValidation, validateRequest, async
   res.status(201).json({ token: accessToken, user });
 });
 
-router.post('/login', authLimiter, loginValidation, validateRequest, async (req, res) => {
+router.post('/login', loginLimiter, loginValidation, validateRequest, async (req, res) => {
   /**
    * @openapi
    * /api/auth/login:
@@ -373,7 +383,7 @@ router.post('/logout', requireAuth, async (req, res) => {
   res.json({ message: 'Logged out successfully' });
 });
 
-router.post('/forgot-password', authLimiter, async (req, res) => {
+router.post('/forgot-password', loginLimiter, async (req, res) => {
   res.json({ message: 'If that email exists, a password reset link has been sent.' });
 });
 

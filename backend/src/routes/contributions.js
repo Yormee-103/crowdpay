@@ -1,5 +1,6 @@
 const router = require('express').Router();
 const jwt = require('jsonwebtoken');
+const rateLimit = require('express-rate-limit');
 const { Keypair, TransactionBuilder } = require('@stellar/stellar-sdk');
 const db = require('../config/database');
 const { networkPassphrase, isTestnet } = require('../config/stellar');
@@ -25,6 +26,16 @@ const {
 
 const SUPPORTED_ASSETS = getSupportedAssetCodes();
 const PREPARED_CONTRIBUTION_EXPIRES_IN = '10m';
+
+const isTest = process.env.NODE_ENV === 'test';
+const contributionPostLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: isTest ? 100000 : 5,
+  message: { error: 'Too many requests, please try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: () => isTest,
+});
 
 /**
  * @openapi
@@ -464,7 +475,7 @@ router.post('/submit-signed', requireAuth, async (req, res) => {
 });
 
 // Contribute to a campaign (authenticated, custodial)
-router.post('/', requireAuth, contributionValidation, validateRequest, async (req, res) => {
+router.post('/', contributionPostLimiter, requireAuth, contributionValidation, validateRequest, async (req, res) => {
   /**
    * @openapi
    * /api/contributions:
