@@ -15,6 +15,10 @@ vi.mock('react-router-dom', async () => {
   };
 });
 
+vi.mock('../context/ThemeContext', () => ({
+  useTheme: () => ({ dark: false, toggleTheme: vi.fn() }),
+}));
+
 vi.mock('../context/AuthContext', () => ({
   useAuth: vi.fn(),
 }));
@@ -51,6 +55,19 @@ describe('Navbar', () => {
     expect(screen.getByRole('link', { name: /dashboard/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /logout/i })).toBeInTheDocument();
     expect(screen.getByText('Bola')).toBeInTheDocument();
+  });
+
+  it('shows dashboard when authenticated as contributor', () => {
+    useAuth.mockReturnValue({
+      user: { name: 'Alice', role: 'contributor' },
+      logout: mockLogout,
+    });
+    render(
+      <MemoryRouter>
+        <Navbar />
+      </MemoryRouter>
+    );
+    expect(screen.getByRole('link', { name: /dashboard/i })).toBeInTheDocument();
   });
 
   it('calls logout and navigates home', async () => {

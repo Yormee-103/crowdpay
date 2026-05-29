@@ -23,10 +23,7 @@ export default function Navbar() {
               {(user.role === 'creator' || user.role === 'admin') && (
                 <Link to="/campaigns/new" style={styles.link}>Start Campaign</Link>
               )}
-              {(user.role === 'creator' || user.role === 'admin') && (
-                <Link to="/dashboard" style={styles.link}>Dashboard</Link>
-              )}
-              <Link to="/my-contributions" style={styles.link}>My Contributions</Link>
+              <Link to="/dashboard" style={styles.link}>Dashboard</Link>
               {user.role === 'admin' && <Link to="/admin" style={styles.link}>Admin</Link>}
               <Link to="/developer" style={styles.link}>Developer</Link>
               <span style={styles.name}>{user.name}</span>

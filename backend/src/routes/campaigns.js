@@ -18,6 +18,7 @@ const { insertWithdrawalPendingSignatures } = require('../services/stellarTransa
 const { sendEmail } = require('../services/emailService');
 const { uploadCampaignCoverImage } = require('../services/storage');
 const { isKycRequiredForCampaigns } = require('../services/kycProvider');
+const { listCreatorCampaigns } = require('../services/userDashboardService');
 const {
   createCampaignValidation,
   createCampaignUpdateValidation,
@@ -239,6 +240,11 @@ router.get('/', getCampaignsValidation, validateRequest, async (req, res) => {
   const result = await db.query(query, [...params, limit, offset]);
 
   res.json({ total, limit, offset, campaigns: result.rows });
+});
+
+router.get('/mine', requireAuth, async (req, res) => {
+  const campaigns = await listCreatorCampaigns(req.user.userId);
+  res.json(campaigns);
 });
 
 router.get('/:id/milestones', async (req, res) => {

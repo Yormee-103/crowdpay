@@ -179,9 +179,9 @@ export const api = {
   setToken,
   getToken: () => accessToken,
 
-  getMyCampaigns: (token) => request('GET', '/users/me/campaigns', null, token),
+  getMyCampaigns: (token) => request('GET', '/campaigns/mine', null, token),
   getMyStats: (token) => request('GET', '/users/me/stats', null, token),
-  getMyContributions: (token) => request('GET', '/users/me/contributions', null, token),
+  getMyContributions: (token) => request('GET', '/contributions/mine', null, token),
   getMe: (token) => request('GET', '/users/me', null, token),
   startKyc: (token) => request('POST', '/users/me/kyc/start', null, token),
 

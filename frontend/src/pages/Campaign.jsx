@@ -760,6 +760,7 @@ export default function Campaign() {
       )}
 
       {token && (
+        <div id="withdrawals">
         <WithdrawalsSection
           campaign={campaign}
           milestones={milestones}
@@ -776,6 +777,7 @@ export default function Campaign() {
               .catch(() => {});
           }}
         />
+        </div>
       )}
 
       <MilestoneTracker

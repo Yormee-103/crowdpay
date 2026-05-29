@@ -23,6 +23,7 @@ const {
   buildContributionMemo,
   submitCustodialContribution,
 } = require('../services/contributionService');
+const { listUserContributions } = require('../services/userDashboardService');
 
 const SUPPORTED_ASSETS = getSupportedAssetCodes();
 const PREPARED_CONTRIBUTION_EXPIRES_IN = '10m';
@@ -110,6 +111,12 @@ function validateSubmittedContributionXdr({ signedXdr, unsignedXdr, senderPublic
   }
 }
 
+router.get('/mine', requireAuth, async (req, res) => {
+  const rows = await listUserContributions(req.user.userId);
+  if (rows === null) return res.status(404).json({ error: 'User not found' });
+  res.json(rows);
+});
+
 // Get contributions for a campaign
 router.get('/campaign/:campaignId', async (req, res) => {
   const { rows } = await db.query(
@@ -133,46 +140,10 @@ router.get('/campaign/:campaignId', async (req, res) => {
   res.json(rows);
 });
 
-// List contributions for the authenticated user (alias for /api/users/me/contributions)
+// List contributions for the authenticated user (alias for /api/contributions/mine)
 router.get('/', requireAuth, async (req, res) => {
-  /**
-   * @openapi
-   * /api/contributions:
-   *   get:
-   *     tags: [Contributions]
-   *     summary: List contributions for the current user
-   *     security:
-   *       - bearerAuth: []
-   *     responses:
-   *       200:
-   *         description: OK
-   *         content:
-   *           application/json:
-   *             schema:
-   *               type: array
-   *               items:
-   *                 type: object
-   *       401:
-   *         description: Unauthorized
-   */
-  const { rows: userRows } = await db.query(
-    'SELECT wallet_public_key FROM users WHERE id = $1',
-    [req.user.userId]
-  );
-  if (!userRows.length) return res.status(404).json({ error: 'User not found' });
-
-  const senderPublicKey = userRows[0].wallet_public_key;
-  const { rows } = await db.query(
-    `SELECT ctr.id, ctr.amount, ctr.asset, ctr.anchor_id, ctr.anchor_transaction_id,
-            ctr.tx_hash, ctr.created_at,
-            c.id AS campaign_id, c.title AS campaign_title, c.status AS campaign_status,
-            c.target_amount, c.raised_amount
-     FROM contributions ctr
-     JOIN campaigns c ON c.id = ctr.campaign_id
-     WHERE ctr.sender_public_key = $1
-     ORDER BY ctr.created_at DESC`,
-    [senderPublicKey]
-  );
+  const rows = await listUserContributions(req.user.userId);
+  if (rows === null) return res.status(404).json({ error: 'User not found' });
   res.json(rows);
 });
 
