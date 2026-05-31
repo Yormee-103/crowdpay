@@ -16,9 +16,13 @@ vi.mock('react-router-dom', async () => {
   };
 });
 
-vi.mock('../context/ThemeContext', () => ({
-  useTheme: () => ({ dark: false, toggleTheme: vi.fn() }),
-}));
+vi.mock('../context/ThemeContext', async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    useTheme: () => ({ dark: false, toggleTheme: vi.fn() }),
+  };
+});
 
 vi.mock('../context/AuthContext', () => ({
   useAuth: vi.fn(),
