@@ -210,8 +210,23 @@ export const api = {
     request('GET', '/contributions/quote', null, {
       query: { send_asset, dest_asset, dest_amount },
     }),
-  failExpiredCampaigns: () => request('POST', '/campaigns/cron/fail-expired'),
-  triggerCampaignRefunds: (campaignId) => request('POST', `/campaigns/${campaignId}/trigger-refunds`),
+  getContributionFinalization: (txHash, token) =>
+    request('GET', `/contributions/finalization/${txHash}`, null, token),
+  failExpiredCampaigns: (token) => request('POST', '/campaigns/cron/fail-expired', null, token),
+  triggerCampaignRefunds: (campaignId, token) => request('POST', `/campaigns/${campaignId}/trigger-refunds`, null, token),
+
+  getWithdrawalCapabilities: (token) => request('GET', '/withdrawals/capabilities', null, token),
+  listWithdrawals: (campaignId, token) =>
+    request('GET', `/withdrawals/campaign/${campaignId}`, null, token),
+  requestWithdrawal: (body, token) => request('POST', '/withdrawals/request', body, token),
+  approveWithdrawalCreator: (id, token, body) =>
+    request('POST', `/withdrawals/${id}/approve/creator`, body || {}, token),
+  approveWithdrawalPlatform: (id, token) =>
+    request('POST', `/withdrawals/${id}/approve/platform`, {}, token),
+  cancelWithdrawal: (id, body, token) => request('POST', `/withdrawals/${id}/cancel`, body || {}, token),
+  rejectWithdrawal: (id, body, token) => request('POST', `/withdrawals/${id}/reject`, body || {}, token),
+  getWithdrawalEvents: (id, token) => request('GET', `/withdrawals/${id}/events`, null, token),
+  getWithdrawal: (id, token) => request('GET', `/withdrawals/${id}`, null, token),
 
   getWithdrawalCapabilities: () => request('GET', '/withdrawals/capabilities'),
   listWithdrawals: (campaignId) =>

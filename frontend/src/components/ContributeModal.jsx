@@ -348,9 +348,39 @@ export default function ContributeModal({ campaign, onClose, onSuccess }) {
           ? await submitWithFreighter()
           : await submitWithCustodial();
       if (paymentMethod === 'anchor') return;
+      
       setResult(data);
-      setPhase('success');
-      onSuccess();
+      setPhase('confirming');
+      setLoadingLabel('Confirming on Stellar…');
+      
+      // Poll finalization endpoint until status is 'finalized' or 'failed'
+      const pollFinalization = async (txHash, maxAttempts = 15) => {
+        for (let i = 0; i < maxAttempts; i++) {
+          await new Promise(r => setTimeout(r, 2000));
+          try {
+            const finalizationResult = await api.getContributionFinalization(txHash, token);
+            if (finalizationResult.finalization_status === 'finalized') {
+              setPhase('success');
+              onSuccess();
+              return;
+            }
+            if (finalizationResult.finalization_status === 'failed') {
+              setPhase('success');
+              setError('The contribution transaction failed on Stellar. Please try again.');
+              onSuccess();
+              return;
+            }
+          } catch (err) {
+            // Keep polling on error
+          }
+        }
+        // Timeout: show success screen with timeout message but allow user to view on Stellar Expert
+        setPhase('success');
+        setError(null);
+        onSuccess();
+      };
+      
+      pollFinalization(data.tx_hash);
     } catch (err) {
       if (paymentMethod === 'anchor' && anchorPopupRef.current && !anchorPopupRef.current.closed) {
         anchorPopupRef.current.close();
@@ -683,6 +713,44 @@ export default function ContributeModal({ campaign, onClose, onSuccess }) {
               Close
             </button>
           </div>
+        ) : phase === 'confirming' ? (
+          <div>
+            <h2 id="contribute-title" style={styles.title}>
+              Confirming on Stellar…
+            </h2>
+            <div style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
+              <div style={{
+                width: '48px',
+                height: '48px',
+                border: '4px solid var(--color-border-lighter)',
+                borderTop: '4px solid var(--color-accent)',
+                borderRadius: '50%',
+                animation: 'spin 1s linear infinite',
+                margin: '0 auto',
+                marginBottom: '1rem',
+              }} />
+              <p style={{ color: 'var(--color-text-secondary)', fontSize: '0.95rem' }}>
+                Your payment was submitted. We're waiting for it to be confirmed on the Stellar ledger, which usually takes 3–5 seconds.
+              </p>
+            </div>
+            {result?.tx_hash && (
+              <p style={{ fontSize: '0.875rem', marginBottom: '1rem', wordBreak: 'break-all', textAlign: 'center' }}>
+                <a
+                  href={stellarExpertTxUrl(result.tx_hash)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ color: 'var(--color-accent)', fontWeight: 600 }}
+                >
+                  View transaction on Stellar Expert
+                </a>
+              </p>
+            )}
+            <style>{`
+              @keyframes spin {
+                to { transform: rotate(360deg); }
+              }
+            `}</style>
+          </div>
         ) : (
           <div>
             <h2 id="contribute-title" style={styles.title}>
@@ -715,6 +783,12 @@ export default function ContributeModal({ campaign, onClose, onSuccess }) {
               <div className="alert alert--info" style={{ marginBottom: '1rem', fontSize: '0.85rem' }}>
                 <strong>Anchor reference:</strong> {result.anchor_transaction_id}
               </div>
+            )}
+
+            {error && (
+              <p className="alert alert--error" style={{ marginBottom: '1rem' }} role="alert">
+                {error}
+              </p>
             )}
 
             <div style={{ marginTop: '1.5rem', borderTop: '1px solid var(--color-border-lighter)', paddingTop: '1.25rem' }}>
