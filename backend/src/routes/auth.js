@@ -254,6 +254,7 @@ router.post('/register', registerLimiter, registerValidation, validateRequest, a
   // Support freighter (non-custodial) registration where frontend provides wallet_public_key
   let publicKey;
   let encryptedSecret = null;
+  let secret = null;
   let walletType = req.body.wallet_type || 'custodial';
 
   if (walletType === 'freighter') {
@@ -263,7 +264,7 @@ router.post('/register', registerLimiter, registerValidation, validateRequest, a
   } else {
     const keypair = Keypair.random();
     publicKey = keypair.publicKey();
-    const secret = keypair.secret();
+    secret = keypair.secret();
     encryptedSecret = await encryptWalletSecret(secret, { walletPublicKey: publicKey });
   }
 
@@ -286,12 +287,15 @@ router.post('/register', registerLimiter, registerValidation, validateRequest, a
 
   const requestId = req.id;
   setImmediate(() => {
-    ensureCustodialAccountFundedAndTrusted({ publicKey, secret }).catch((err) => {
-      logger.error('Background Stellar funding/trustlines failed', {
-        request_id: requestId,
-        error: err.message,
+    // Only fund and setup trustlines for custodial wallets
+    if (walletType === 'custodial' && secret) {
+      ensureCustodialAccountFundedAndTrusted({ publicKey, secret }).catch((err) => {
+        logger.error('Background Stellar funding/trustlines failed', {
+          request_id: requestId,
+          error: err.message,
+        });
       });
-    });
+    }
 
     sendEmail({
       to: normalizedEmail,

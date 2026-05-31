@@ -25,6 +25,7 @@ const {
   getCampaignsValidation,
   validateRequest,
 } = require('../middleware/validation');
+const asyncHandler = require('../utils/asyncHandler');
 
 const crypto = require('crypto');
 
@@ -40,7 +41,7 @@ function stripHtml(value = '') {
  */
 
 const requireCampaignMember = (...allowedRoles) => {
-  return async (req, res, next) => {
+  return asyncHandler(async (req, res, next) => {
     const campaignId = req.params.id || req.params.campaign_id || req.body.campaign_id;
     if (!campaignId) return res.status(400).json({ error: 'Campaign ID is required' });
 
@@ -80,7 +81,7 @@ const requireCampaignMember = (...allowedRoles) => {
 
     req.campaignRole = role;
     next();
-  };
+  });
 };
 
 const upload = multer({
@@ -152,7 +153,7 @@ async function logWithdrawalEvent(client, { withdrawalRequestId, actorUserId, ac
 }
 
 // List campaigns with optional search, filtering, sorting, and pagination
-router.get('/', getCampaignsValidation, validateRequest, async (req, res) => {
+router.get('/', getCampaignsValidation, validateRequest, asyncHandler(async (req, res) => {
   /**
    * @openapi
    * /api/campaigns:
@@ -251,14 +252,14 @@ router.get('/', getCampaignsValidation, validateRequest, async (req, res) => {
   const result = await db.query(query, [...params, limit, offset]);
 
   res.json({ total, limit, offset, campaigns: result.rows });
-});
+}));
 
-router.get('/mine', requireAuth, async (req, res) => {
+router.get('/mine', requireAuth, asyncHandler(async (req, res) => {
   const campaigns = await listCreatorCampaigns(req.user.userId);
   res.json(campaigns);
-});
+}));
 
-router.get('/:id/milestones', async (req, res) => {
+router.get('/:id/milestones', asyncHandler(async (req, res) => {
   const { rows } = await db.query(
     `SELECT m.*, (c.milestones_contract_id IS NOT NULL) AS on_chain
      FROM milestones m
@@ -268,9 +269,9 @@ router.get('/:id/milestones', async (req, res) => {
     [req.params.id]
   );
   res.json(rows);
-});
+}));
 
-router.post('/:id/milestones', requireAuth, requireCampaignMember('owner'), async (req, res) => {
+router.post('/:id/milestones', requireAuth, requireCampaignMember('owner'), asyncHandler(async (req, res) => {
   let normalizedMilestones;
   try {
     normalizedMilestones = normalizeMilestonesInput(req.body?.milestones);
@@ -339,10 +340,10 @@ router.post('/:id/milestones', requireAuth, requireCampaignMember('owner'), asyn
   } finally {
     client.release();
   }
-});
+}));
 
 // Get single Campaign
-router.get('/:id', async (req, res) => {
+router.get('/:id', asyncHandler(async (req, res) => {
   /**
    * @openapi
    * /api/campaigns/{id}:
@@ -414,10 +415,10 @@ router.get('/:id', async (req, res) => {
   }
 
   res.json(response);
-});
+}));
 
 // Embeddable campaign widget data (public, with permissive CORS)
-router.get('/:id/embed', async (req, res) => {
+router.get('/:id/embed', asyncHandler(async (req, res) => {
   // Allow this endpoint to be accessed from any origin for embedding
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Methods', 'GET');
@@ -449,10 +450,10 @@ router.get('/:id/embed', async (req, res) => {
     progress_percentage: Math.round(pct * 10) / 10,
     contribution_url: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/campaigns/${campaign.id}`,
   });
-});
+}));
 
 // Get backers for a campaign
-router.get('/:id/backers', async (req, res) => {
+router.get('/:id/backers', asyncHandler(async (req, res) => {
   const campaignId = req.params.id;
   const { rows: campaignRows } = await db.query('SELECT show_backer_amounts FROM campaigns WHERE id = $1', [campaignId]);
   if (!campaignRows.length) return res.status(404).json({ error: 'Campaign not found' });
@@ -471,10 +472,10 @@ router.get('/:id/backers', async (req, res) => {
   `;
   const { rows } = await db.query(query, [campaignId]);
   res.json(rows);
-});
+}));
 
 // SSE stream for real-time campaign funding updates
-router.get('/:id/stream', async (req, res) => {
+router.get('/:id/stream', asyncHandler(async (req, res) => {
   const campaignId = parseInt(req.params.id, 10);
   const { rows } = await db.query('SELECT id FROM campaigns WHERE id = $1', [campaignId]);
   if (!rows.length) return res.status(404).json({ error: 'Campaign not found' });
@@ -501,10 +502,10 @@ router.get('/:id/stream', async (req, res) => {
     clearInterval(heartbeat);
     removeSSEClient(campaignId, res);
   });
-});
+}));
 
 // Get live on-chain balance for a campaign
-router.get('/:id/balance', async (req, res) => {
+router.get('/:id/balance', asyncHandler(async (req, res) => {
   /**
    * @openapi
    * /api/campaigns/{id}/balance:
@@ -538,16 +539,16 @@ router.get('/:id/balance', async (req, res) => {
   if (!rows.length) return res.status(404).json({ error: 'Campaign not found' });
   const balance = await getCampaignBalance(rows[0].wallet_public_key);
   res.json(balance);
-});
+}));
 
 // Scheduled endpoint to fail expired campaigns and prevent further contributions
-router.post('/cron/fail-expired', requireAuth, requireRole('admin'), async (req, res) => {
+router.post('/cron/fail-expired', requireAuth, requireRole('admin'), asyncHandler(async (req, res) => {
   const { failed, funded } = await refreshActiveCampaignStatuses();
   res.json({ failedCampaigns: failed, fundedCampaigns: funded });
-});
+}));
 
 // Scheduled endpoint to send 48h deadline reminders
-router.post('/cron/reminders', requireAuth, requireRole('admin'), async (req, res) => {
+router.post('/cron/reminders', requireAuth, requireRole('admin'), asyncHandler(async (req, res) => {
   // Find campaigns ending in exactly 2 days that are still active
   const { rows } = await db.query(
     `SELECT c.id, c.title, c.deadline, u.email as creator_email
@@ -567,10 +568,10 @@ If your target is reached, you can request a withdrawal. Otherwise, contribution
   }
 
   res.json({ remindersSent: rows.length });
-});
+}));
 
 // Trigger refund withdrawal requests for a failed campaign
-router.post('/:id/trigger-refunds', requireAuth, requireRole('admin'), async (req, res) => {
+router.post('/:id/trigger-refunds', requireAuth, requireRole('admin'), asyncHandler(async (req, res) => {
   const campaignId = req.params.id;
   const { rows: campaigns } = await db.query(
     `SELECT id, wallet_public_key, status FROM campaigns WHERE id = $1`,
@@ -647,10 +648,10 @@ router.post('/:id/trigger-refunds', requireAuth, requireRole('admin'), async (re
   } finally {
     client.release();
   }
-});
+}));
 
 // Create campaign (authenticated)
-router.post('/', requireAuth, requireRole('creator', 'admin'), createCampaignValidation, validateRequest, async (req, res) => {
+router.post('/', requireAuth, requireRole('creator', 'admin'), createCampaignValidation, validateRequest, asyncHandler(async (req, res) => {
   /**
    * @openapi
    * /api/campaigns:
@@ -794,10 +795,10 @@ router.post('/', requireAuth, requireRole('creator', 'admin'), createCampaignVal
   watchCampaignWallet(campaign.id, wallet.publicKey);
 
   res.status(201).json(campaign);
-});
+}));
 
 // PATCH /campaigns/:id - Update campaign (title, description, deadline)
-router.patch('/:id', requireAuth, async (req, res) => {
+router.patch('/:id', requireAuth, asyncHandler(async (req, res) => {
   const campaignId = req.params.id;
   const { title, description, deadline } = req.body;
 
@@ -911,7 +912,7 @@ router.patch('/:id', requireAuth, async (req, res) => {
   }
 
   res.json(updatedRows[0]);
-});
+}));
 
 router.post(
   '/:id/cover-image',
@@ -955,7 +956,7 @@ router.post(
   }
 );
 
-router.get('/:id/updates', async (req, res) => {
+router.get('/:id/updates', asyncHandler(async (req, res) => {
   const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 10));
   const offset = Math.max(0, Number(req.query.offset) || 0);
   const { rows } = await db.query(
@@ -968,9 +969,9 @@ router.get('/:id/updates', async (req, res) => {
     [req.params.id, limit, offset]
   );
   res.json(rows);
-});
+}));
 
-router.post('/:id/updates', requireAuth, requireCampaignMember('owner', 'manager'), createCampaignUpdateValidation, validateRequest, async (req, res) => {
+router.post('/:id/updates', requireAuth, requireCampaignMember('owner', 'manager'), createCampaignUpdateValidation, validateRequest, asyncHandler(async (req, res) => {
   const { title, body } = req.body;
 
   const { rows } = await db.query(
@@ -980,10 +981,10 @@ router.post('/:id/updates', requireAuth, requireCampaignMember('owner', 'manager
     [req.params.id, req.user.userId, title.trim(), body.trim()]
   );
   res.status(201).json(rows[0]);
-});
+}));
 
 // POST /campaigns/:id/members — owner invites a user by email
-router.post('/:id/members', requireAuth, requireCampaignMember('owner'), async (req, res) => {
+router.post('/:id/members', requireAuth, requireCampaignMember('owner'), asyncHandler(async (req, res) => {
   const { email, role } = req.body;
   if (!email || !role) return res.status(422).json({ error: 'Email and role are required' });
   if (!['owner', 'manager', 'viewer'].includes(role)) {
@@ -1029,10 +1030,10 @@ router.post('/:id/members', requireAuth, requireCampaignMember('owner'), async (
   }
 
   res.status(201).json(memberRows[0]);
-});
+}));
 
 // GET /campaigns/:id/members — list current team (owner only)
-router.get('/:id/members', requireAuth, requireCampaignMember('owner'), async (req, res) => {
+router.get('/:id/members', requireAuth, requireCampaignMember('owner'), asyncHandler(async (req, res) => {
   const { rows } = await db.query(
     `SELECT cm.id, cm.user_id, cm.email, cm.role, cm.accepted_at, cm.created_at,
             u.name AS user_name
@@ -1043,10 +1044,10 @@ router.get('/:id/members', requireAuth, requireCampaignMember('owner'), async (r
     [req.params.id]
   );
   res.json(rows);
-});
+}));
 
 // PATCH /campaigns/:id/members/:userId — change role (owner only)
-router.patch('/:id/members/:userId', requireAuth, requireCampaignMember('owner'), async (req, res) => {
+router.patch('/:id/members/:userId', requireAuth, requireCampaignMember('owner'), asyncHandler(async (req, res) => {
   const { role } = req.body;
   if (!role || !['owner', 'manager', 'viewer'].includes(role)) {
     return res.status(422).json({ error: 'Invalid role. Must be owner, manager, or viewer' });
@@ -1065,10 +1066,10 @@ router.patch('/:id/members/:userId', requireAuth, requireCampaignMember('owner')
   }
 
   res.json(rows[0]);
-});
+}));
 
 // DELETE /campaigns/:id/members/:userId — remove member or self-leave
-router.delete('/:id/members/:userId', requireAuth, async (req, res) => {
+router.delete('/:id/members/:userId', requireAuth, asyncHandler(async (req, res) => {
   const memberUserId = req.params.userId;
   const isSelf = String(memberUserId) === String(req.user.userId);
 
@@ -1106,10 +1107,10 @@ router.delete('/:id/members/:userId', requireAuth, async (req, res) => {
   }
 
   res.json({ message: 'Member removed successfully' });
-});
+}));
 
 // POST /campaigns/:id/members/accept — accept invitation (token-based)
-router.post('/:id/members/accept', requireAuth, async (req, res) => {
+router.post('/:id/members/accept', requireAuth, asyncHandler(async (req, res) => {
   const { token: inviteToken } = req.body;
   if (!inviteToken) return res.status(422).json({ error: 'Invitation token is required' });
 
@@ -1135,6 +1136,6 @@ router.post('/:id/members/accept', requireAuth, async (req, res) => {
   );
 
   res.json(rows[0]);
-});
+}));
 
 module.exports = router;
