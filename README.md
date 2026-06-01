@@ -1,5 +1,7 @@
 # CrowdPay
 
+[![CI](https://github.com/Savitura/crowdpay/actions/workflows/ci.yml/badge.svg)](https://github.com/Savitura/crowdpay/actions/workflows/ci.yml)
+
 **Global funding infrastructure built on Stellar.**
 
 ---
@@ -67,6 +69,21 @@ User clicks "Contribute"
   → User signs (custodial: backend signs; non-custodial: user's wallet)
   → Transaction submitted to Stellar testnet / mainnet
   → Horizon streams ledger events
+
+
+### Wallet Architecture & Security
+
+Each campaign wallet is secured with:
+
+- **AES-256-GCM encryption** for private key storage
+- **Multisig control** requiring both creator and platform signatures
+- **Disabled master keys** after initial setup
+- **Full audit trail** of all transactions and payments
+- **Recovery procedures** for encrypted wallet secrets
+
+See [WALLET_ARCHITECTURE.md](WALLET_ARCHITECTURE.md) for complete technical details.
+
+
   → Backend confirms + indexes in PostgreSQL
   → Campaign progress updates in real time
 ```
@@ -159,8 +176,30 @@ cd ../frontend && npm install
 ```bash
 cd backend
 cp .env.example .env
-# Edit .env — add your Stellar platform keypair and DB credentials
+# Edit .env — add your Stellar platform keypair, DB credentials, and optional anchor on-ramp config
 ```
+
+To enable SEP-24 anchor deposits, configure the backend anchor signing wallet and a supported anchor:
+
+- `ANCHOR_WALLET_HOME_DOMAIN`
+- `ANCHOR_WALLET_SIGNING_SECRET`
+- `ANCHOR_MONEYGRAM_ENABLED` (default `true`)
+- `ANCHOR_MONEYGRAM_ENV` (`sandbox`, `preview`, or `production`)
+
+For a custom anchor, configure:
+
+- `ANCHOR_CUSTOM_ID`
+- `ANCHOR_CUSTOM_NAME`
+- `ANCHOR_CUSTOM_HOME_DOMAIN`
+- `ANCHOR_CUSTOM_WEB_AUTH_ENDPOINT`
+- `ANCHOR_CUSTOM_SEP24_ENDPOINT`
+- `ANCHOR_CUSTOM_SIGNING_KEY`
+- `ANCHOR_CUSTOM_ASSET_CODE`
+- `ANCHOR_CUSTOM_ASSET_ISSUER`
+- `ANCHOR_CUSTOM_NETWORK` (`testnet` or `mainnet`)
+- `ANCHOR_CUSTOM_RAILS` (comma-separated)
+
+Creator identity verification is enforced by default before campaign launch. For local testnet development, set `KYC_REQUIRED_FOR_CAMPAIGNS=false` in the backend environment; optionally mirror it with `VITE_KYC_REQUIRED_FOR_CAMPAIGNS=false` so the frontend knows before the profile request returns. For Persona-hosted verification, configure `KYC_PROVIDER=persona`, `PERSONA_API_KEY`, `PERSONA_TEMPLATE_ID`, and `APP_BASE_URL`.
 
 ### 3. Set up the database
 
@@ -192,6 +231,22 @@ cd frontend && npm run dev
 Backend runs on `http://localhost:3001`  
 Frontend runs on `http://localhost:5173`
 
+### Testing
+
+```bash
+# Backend unit + route tests
+cd backend && npm test
+
+# Frontend component tests (Vitest + React Testing Library)
+cd frontend && npm test
+
+# End-to-end tests (Playwright — starts backend + frontend dev servers)
+# Requires PostgreSQL with schema + seed applied (see docker-compose on port 5433)
+npm install
+npx playwright install
+npm run test:e2e
+```
+
 ---
 
 ## Core Stellar Concepts Used
@@ -204,6 +259,19 @@ Before a campaign wallet can receive USDC, it must establish a trustline to the 
 
 ### Path payments
 Contributions use `pathPaymentStrictReceive` so the campaign always receives the exact asset it expects, regardless of what the contributor sends.
+
+
+---
+
+## Documentation
+
+- **[DEPLOYMENT.md](DEPLOYMENT.md)** - How to deploy CrowdPay on Railway, Render, or a self-hosted Ubuntu VPS, including a full environment variable reference
+- **[WALLET_ARCHITECTURE.md](WALLET_ARCHITECTURE.md)** - Complete technical architecture for campaign wallets, including key management, lifecycle phases, security considerations, and API reference
+- **[OPERATOR_GUIDE.md](OPERATOR_GUIDE.md)** - Step-by-step guide for platform operators covering setup, daily operations, maintenance, troubleshooting, and emergency procedures
+- **[IMPLEMENTATION_SUMMARY.md](IMPLEMENTATION_SUMMARY.md)** - Summary of the wallet architecture implementation with quick start guides
+- **[backend/API.md](backend/API.md)** - REST API documentation with endpoint details and examples
+
+
 
 ### Horizon streaming
 The backend opens a streaming connection to Horizon to watch each campaign wallet for incoming payments. When a payment lands, it is indexed in PostgreSQL and the campaign total updates.
