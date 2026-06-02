@@ -1,6 +1,14 @@
 require('dotenv').config();
 require('./config/env').validateEnv();
 
+const Sentry = require('@sentry/node');
+Sentry.init({
+  dsn: process.env.SENTRY_DSN,
+  environment: process.env.NODE_ENV || 'development',
+  tracesSampleRate: process.env.NODE_ENV === 'production' ? 0.2 : 1.0,
+  enabled: !!process.env.SENTRY_DSN,
+});
+
 const path = require('path');
 const express = require('express');
 const cors = require('cors');
@@ -29,6 +37,8 @@ app.use(
 );
 app.use(express.json({ limit: '50kb' }));
 app.use(cookieParser());
+app.use(Sentry.Handlers.requestHandler());
+app.use(Sentry.Handlers.tracingHandler());
 app.use(requestIdMiddleware);
 app.use(requestLogger);
 app.use(normalizeErrorResponse);
@@ -81,7 +91,8 @@ app.use('/api/auth', require('./routes/auth'));
 // Backwards/alternate compatibility for docs + clients expecting /api/users/register|login.
 app.use('/api/users', require('./routes/auth'));
 app.use('/api/users', require('./routes/users'));
-app.use('/api/campaigns', require('./routes/campaigns'));
+app.use("/api/campaigns", require("./routes/campaignUpdates"));
+app.use("/api/campaigns", require("./routes/campaigns"));
 app.use('/api/anchor', require('./routes/anchor'));
 app.use('/api/contributions', require('./routes/contributions'));
 app.use('/api/withdrawals', require('./routes/withdrawals'));
@@ -97,6 +108,40 @@ app.get('/health', (_, res) => res.json({ status: 'ok' }));
 app.get('/api/config', (_, res) =>
   res.json({ platform_fee_bps: parseInt(process.env.PLATFORM_FEE_BPS || '0', 10) })
 );
+
+// Public platform stats — used on the hero / landing section.
+// Cached for 60 s; invalidated by ledgerMonitor after each indexed contribution.
+const cache = require('./utils/cache');
+const STATS_CACHE_KEY = 'stats:public';
+app.get('/api/stats', async (_req, res) => {
+  const cached = cache.get(STATS_CACHE_KEY);
+  if (cached) return res.json(cached);
+
+  try {
+    const db = require('./config/database');
+    const [campaigns, raised, contributions] = await Promise.all([
+      db.query(`SELECT COUNT(*)::int AS total
+                FROM campaigns
+                WHERE deleted_at IS NULL AND status NOT IN ('draft', 'failed')`),
+      db.query(`SELECT COALESCE(SUM(raised_amount), 0)::numeric AS total
+                FROM campaigns
+                WHERE deleted_at IS NULL`),
+      db.query(`SELECT COUNT(*)::int AS total FROM contributions`),
+    ]);
+
+    const payload = {
+      total_campaigns: campaigns.rows[0].total,
+      total_raised: parseFloat(raised.rows[0].total),
+      total_contributions: contributions.rows[0].total,
+    };
+
+    cache.set(STATS_CACHE_KEY, payload, 60_000); // 60 s TTL
+    res.json(payload);
+  } catch (err) {
+    logger.error('Failed to fetch public stats', { error: err.message });
+    res.status(500).json({ error: 'Failed to fetch stats' });
+  }
+});
 
 app.get('/health/ledger', async (_req, res) => {
   try {
@@ -116,6 +161,7 @@ if (process.env.SERVE_FRONTEND === 'true') {
   });
 }
 
+app.use(Sentry.Handlers.errorHandler());
 app.use(errorHandler);
 
 const { startWebhookRetryPoller } = require('./services/webhookDispatcher');

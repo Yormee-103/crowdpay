@@ -25,6 +25,12 @@ function buildApp({
       getCampaignBalance: async () => ({}),
       getSupportedAssetCodes: () => ['XLM', 'USDC'],
       buildWithdrawalTransaction: buildWithdrawalTransactionImpl,
+      buildBatchRefundTransaction: async () => 'unsigned-refund-xdr',
+      signTransactionXdr: ({ xdr }) => xdr + '-signed',
+      submitPreparedTransaction: async () => 'refund-tx-hash',
+    },
+    '../services/walletSecrets': {
+      withDecryptedWalletSecret: async (enc, opts, fn) => fn('DECRYPTED_SECRET'),
     },
     '../services/ledgerMonitor': {
       watchCampaignWallet: async () => {},
@@ -309,9 +315,11 @@ test('GET /api/campaigns supports search, asset filter, and sort', async () => {
   assert.equal(response.body.campaigns.length, 1);
   const listQuery = queries.find((q) => q.text.includes('ORDER BY'));
   assert.ok(listQuery);
-  assert.match(listQuery.text, /ILIKE/i);
-  assert.match(listQuery.text, /raised_amount \/ NULLIF/i);
-  assert.ok(listQuery.params.includes('%solar%'));
+  assert.match(listQuery.text, /search_vector @@ plainto_tsquery/i);
+  assert.match(listQuery.text, /ts_rank\(c\.search_vector/i);
+  assert.match(listQuery.text, /c\.created_at DESC/);
+  assert.doesNotMatch(listQuery.text, /raised_amount \/ NULLIF/i);
+  assert.ok(listQuery.params.includes('solar'));
   assert.ok(listQuery.params.includes('USDC'));
 });
 
@@ -340,6 +348,17 @@ test('POST /api/campaigns/:id/webhooks registers a campaign webhook', async () =
             created_at: '2026-06-02T00:00:00Z'
           }]
         };
+test('POST /api/campaigns/:id/refund/initiate builds unsigned XDR and initiates refund', async () => {
+  const queries = [];
+  const app = buildApp({
+    authUser: { userId: 'creator-1', role: 'creator' },
+    queryImpl: async (text, params) => {
+      queries.push({ text, params });
+      if (text.includes('FROM campaigns') || text.includes('SELECT creator_id')) {
+        return { rows: [{ id: 'camp-1', creator_id: 'creator-1', wallet_public_key: 'GPK', status: 'failed', refund_initiated_at: null }] };
+      }
+      if (text.includes('FROM contributions')) {
+        return { rows: [{ id: 'contrib-1', sender_public_key: 'GSENDER', amount: '10.0', asset: 'XLM' }] };
       }
       return { rows: [] };
     },
@@ -395,6 +414,57 @@ test('POST /api/campaigns/:id/webhooks enforces 5 webhook limit', async () => {
       }
       if (text.includes('COUNT(*)')) {
         return { rows: [{ count: 5 }] }; // Already at limit
+    .post('/api/campaigns/camp-1/refund/initiate')
+    .set('Authorization', 'Bearer token');
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.unsigned_xdr, 'unsigned-refund-xdr');
+  const updateQuery = queries.find((q) => q.text.includes('UPDATE campaigns') && q.text.includes('refund_xdr'));
+  assert.ok(updateQuery);
+  assert.equal(updateQuery.params[0], 'unsigned-refund-xdr');
+});
+
+test('POST /api/campaigns/:id/refund/approve/creator signs refund XDR as creator', async () => {
+  const queries = [];
+  const app = buildApp({
+    authUser: { userId: 'creator-1', role: 'creator' },
+    queryImpl: async (text, params) => {
+      queries.push({ text, params });
+      if (text.includes('FROM campaigns') || text.includes('SELECT creator_id')) {
+        return { rows: [{ id: 'camp-1', creator_id: 'creator-1', refund_xdr: 'unsigned-refund-xdr', status: 'failed' }] };
+      }
+      if (text.includes('FROM users')) {
+        return { rows: [{ wallet_secret_encrypted: 'ENC', wallet_public_key: 'GCREATOR', wallet_type: 'custodial' }] };
+test('GET /api/campaigns uses plainto_tsquery for multi-word search', async () => {
+test('GET /api/campaigns supports sort=trending with CTE query', async () => {
+test('GET /api/campaigns/categories returns category counts', async () => {
+  const app = buildApp({
+    queryImpl: async (text, params) => {
+      return {
+        rows: [
+          { category: 'technology', count: '5' },
+          { category: 'education', count: '3' },
+        ],
+      };
+    },
+  });
+
+  const response = await request(app).get('/api/campaigns/categories');
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.body, [
+    { category: 'technology', count: '5' },
+    { category: 'education', count: '3' },
+  ]);
+});
+
+test('GET /api/campaigns supports category filter', async () => {
+  const queries = [];
+  const app = buildApp({
+    queryImpl: async (text, params) => {
+      queries.push({ text, params });
+      if (text.includes('COUNT(*)')) {
+        return { rows: [{ total: 0 }] };
       }
       return { rows: [] };
     },
@@ -430,6 +500,27 @@ test('GET /api/campaigns/:id/webhooks lists webhooks for campaign', async () => 
             secret_hint: '1234567890…cdef'
           }]
         };
+    .post('/api/campaigns/camp-1/refund/approve/creator')
+    .set('Authorization', 'Bearer token');
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.signed_xdr, 'unsigned-refund-xdr-signed');
+  const updateQuery = queries.find((q) => q.text.includes('UPDATE campaigns') && q.text.includes('refund_xdr'));
+  assert.ok(updateQuery);
+  assert.equal(updateQuery.params[0], 'unsigned-refund-xdr-signed');
+});
+
+test('POST /api/campaigns/:id/refund/approve/platform signs and submits refund to Stellar', async () => {
+  const originalApprover = process.env.PLATFORM_APPROVER_USER_ID;
+  process.env.PLATFORM_APPROVER_USER_ID = 'admin-1';
+  
+  const queries = [];
+  const app = buildApp({
+    authUser: { userId: 'admin-1', role: 'admin' },
+    queryImpl: async (text, params) => {
+      queries.push({ text, params });
+      if (text.includes('FROM campaigns')) {
+        return { rows: [{ id: 'camp-1', wallet_public_key: 'GPK', refund_xdr: 'unsigned-refund-xdr-signed', status: 'failed' }] };
       }
       return { rows: [] };
     },
@@ -501,6 +592,126 @@ test('GET /api/campaigns/:id/webhooks/:wid/deliveries shows delivery history', a
             created_at: '2026-06-02T10:29:00Z',
             updated_at: '2026-06-02T10:30:00Z'
           }]
+    .post('/api/campaigns/camp-1/refund/approve/platform')
+    .set('Authorization', 'Bearer token');
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.success, true);
+  assert.equal(response.body.tx_hash, 'refund-tx-hash');
+
+  const updateCampQuery = queries.find((q) => q.text.includes('UPDATE campaigns') && q.text.includes('refunded'));
+  assert.ok(updateCampQuery);
+  assert.equal(updateCampQuery.params[0], 'refund-tx-hash');
+
+  const updateContribQuery = queries.find((q) => q.text.includes('UPDATE contributions') && q.text.includes('refunded = TRUE'));
+  assert.ok(updateContribQuery);
+
+  process.env.PLATFORM_APPROVER_USER_ID = originalApprover;
+});
+  const response = await request(app).get(
+    '/api/campaigns?search=clean%20energy%20project'
+  );
+
+  assert.equal(response.status, 200);
+  const listQuery = queries.find((q) => q.text.includes('plainto_tsquery'));
+  assert.ok(listQuery);
+  assert.ok(listQuery.params.includes('clean energy project'));
+});
+      if (text.includes('COUNT(*)::int AS total')) {
+      if (text.includes('AS total')) {
+        return { rows: [{ total: 1 }] };
+      }
+      return {
+        rows: [
+          {
+            id: 'camp-1',
+            title: 'Solar panels',
+            description: 'Clean energy',
+            asset_type: 'USDC',
+            status: 'active',
+            raised_amount: '80',
+            target_amount: '100',
+            recentContributions: 3,
+            recent_contributions: 3,
+            recent_volume: 150,
+            trending_score: 380,
+          },
+        ],
+      };
+    },
+  });
+
+  const response = await request(app).get('/api/campaigns?sort=trending');
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.total, 1);
+  assert.equal(response.body.campaigns.length, 1);
+  assert.equal(response.body.campaigns[0].recentContributions, 3);
+  
+  const listQuery = queries.find((q) => q.text.includes('WITH recent AS'));
+  assert.ok(listQuery);
+  assert.match(listQuery.text, /ORDER BY trending_score DESC/i);
+});
+            category: 'technology',
+          },
+        ],
+      };
+    },
+  });
+
+  const response = await request(app).get('/api/campaigns?category=technology');
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.campaigns[0].category, 'technology');
+  const listQuery = queries.find((q) => q.text.includes('ORDER BY'));
+  assert.ok(listQuery);
+  assert.match(listQuery.text, /category = \$/i);
+  assert.ok(listQuery.params.includes('technology'));
+});
+
+test('POST /api/campaigns accepts valid category', async (t) => {
+  const previous = process.env.KYC_REQUIRED_FOR_CAMPAIGNS;
+  t.after(() => {
+    if (previous === undefined) delete process.env.KYC_REQUIRED_FOR_CAMPAIGNS;
+    else process.env.KYC_REQUIRED_FOR_CAMPAIGNS = previous;
+  });
+  process.env.KYC_REQUIRED_FOR_CAMPAIGNS = 'false';
+
+  const queries = [];
+  const app = buildApp({
+    authUser: { userId: 'creator-1', role: 'creator' },
+    queryImpl: async (text, params) => {
+      queries.push({ text, params });
+      if (text.includes('SELECT email, wallet_public_key, kyc_status FROM users')) {
+        return { rows: [{ wallet_public_key: 'GCREATOR', kyc_status: 'unverified' }] };
+      }
+      if (text.includes('INSERT INTO campaigns')) {
+        return {
+          rows: [
+            {
+              id: 'campaign-1',
+              title: 'Tech campaign',
+              asset_type: 'USDC',
+              creator_id: 'creator-1',
+              category: 'technology',
+test('GET /api/campaigns/:id/clone-data returns clone-ready details', async () => {
+  const app = buildApp({
+    queryImpl: async (text, params) => {
+      if (text.includes('FROM campaigns WHERE id = $1')) {
+        return {
+          rows: [
+            {
+              id: 'c-1',
+              title: 'Original Campaign',
+              description: 'My description',
+              target_amount: '100.0000000',
+              asset_type: 'USDC',
+              min_contribution: '5.0000000',
+              max_contribution: '50.0000000',
+              show_backer_amounts: true,
+              deleted_at: null,
+            },
+          ],
         };
       }
       return { rows: [] };
@@ -517,3 +728,73 @@ test('GET /api/campaigns/:id/webhooks/:wid/deliveries shows delivery history', a
   assert.equal(response.body.deliveries[0].status, 'delivered');
   assert.equal(response.body.deliveries[0].response_status, 200);
 });
+    buildWithdrawalTransactionImpl: async () => '',
+    insertWithdrawalPendingSignaturesImpl: async () => 'tx-row',
+  });
+
+  const response = await request(app)
+    .post('/api/campaigns')
+    .set('Authorization', 'Bearer token')
+    .send({ title: 'Tech campaign', target_amount: '100', asset_type: 'USDC', category: 'technology' });
+
+  assert.equal(response.status, 201);
+  assert.equal(response.body.category, 'technology');
+  
+  const insertQuery = queries.find((q) => q.text.includes('INSERT INTO campaigns'));
+  assert.ok(insertQuery);
+  assert.ok(insertQuery.text.includes('category'));
+  assert.ok(insertQuery.params.includes('technology'));
+});
+
+test('POST /api/campaigns rejects invalid category', async (t) => {
+  const previous = process.env.KYC_REQUIRED_FOR_CAMPAIGNS;
+  t.after(() => {
+    if (previous === undefined) delete process.env.KYC_REQUIRED_FOR_CAMPAIGNS;
+    else process.env.KYC_REQUIRED_FOR_CAMPAIGNS = previous;
+  });
+  process.env.KYC_REQUIRED_FOR_CAMPAIGNS = 'false';
+
+  const app = buildApp({
+    authUser: { userId: 'creator-1', role: 'creator' },
+    queryImpl: async () => ({ rows: [] }),
+    buildWithdrawalTransactionImpl: async () => '',
+    insertWithdrawalPendingSignaturesImpl: async () => 'tx-row',
+  });
+
+  const response = await request(app)
+    .post('/api/campaigns')
+    .set('Authorization', 'Bearer token')
+    .send({ title: 'Tech campaign', target_amount: '100', asset_type: 'USDC', category: 'invalid_category' });
+
+  assert.equal(response.status, 400);
+  assert.ok(response.body.errors);
+  assert.ok(response.body.errors.some(e => e.msg && e.msg.includes('category must be one of')));
+  });
+
+  const response = await request(app)
+    .get('/api/campaigns/c-1/clone-data')
+    .set('Authorization', 'Bearer token');
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.title, 'Original Campaign (copy)');
+  assert.equal(response.body.description, 'My description');
+  assert.equal(response.body.target_amount, '100.0000000');
+  assert.equal(response.body.asset_type, 'USDC');
+  assert.equal(response.body.min_contribution, '5.0000000');
+  assert.equal(response.body.max_contribution, '50.0000000');
+  assert.equal(response.body.show_backer_amounts, true);
+  assert.equal(response.body.deadline, undefined);
+});
+
+test('GET /api/campaigns/:id/clone-data returns 404 for missing campaign', async () => {
+  const app = buildApp({
+    queryImpl: async () => ({ rows: [] }),
+  });
+
+  const response = await request(app)
+    .get('/api/campaigns/c-none/clone-data')
+    .set('Authorization', 'Bearer token');
+
+  assert.equal(response.status, 404);
+});
+

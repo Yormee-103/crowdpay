@@ -17,7 +17,9 @@ const {
   emitWebhookEventForCampaign,
   WEBHOOK_EVENTS,
 } = require("./webhookDispatcher");
+const cache = require("../utils/cache");
 const { createNotification } = require("./notifications");
+const Sentry = require("@sentry/node");
 
 /** wallet_public_key -> stream metadata */
 const streamRegistry = new Map();
@@ -350,6 +352,12 @@ async function handlePayment(campaignId, walletPublicKey, payment) {
     } catch {
       // ignore rollback errors after failed work
     }
+    Sentry.withScope((scope) => {
+      scope.setTag("stellar.network", process.env.STELLAR_NETWORK);
+      scope.setExtra("tx_hash", txHash);
+      scope.setExtra("campaign_id", campaignId);
+      Sentry.captureException(err);
+    });
     logger.error("Failed to index contribution", {
       campaign_id: campaignId,
       tx_hash: txHash,
@@ -361,6 +369,11 @@ async function handlePayment(campaignId, walletPublicKey, payment) {
 
   if (postCommitHooks) {
     setImmediate(() => {
+      // Bust public caches — contribution changes raised_amount and contributor_count
+      cache.invalidate(`campaigns:id:${postCommitHooks.campaignId}`);
+      cache.invalidatePrefix('campaigns:list:');
+      cache.invalidatePrefix('stats:');
+
       sendContributionReceipt(postCommitHooks.receiptPayload).catch((e) =>
         logger.error("[receipt] Email failed", {
           campaign_id: postCommitHooks.campaignId,
@@ -412,6 +425,7 @@ async function handlePayment(campaignId, walletPublicKey, payment) {
       }
     });
   }
+}
 
   function scheduleStreamReconnect(campaignId, walletPublicKey, attempt) {
     const delay = Math.min(
@@ -670,4 +684,3 @@ async function handlePayment(campaignId, walletPublicKey, payment) {
     addSSEClient,
     removeSSEClient,
   };
-}

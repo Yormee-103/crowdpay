@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from "react";
-import { Link, useParams, useLocation } from "react-router-dom";
+import React, { useEffect, useState, useRef } from "react";
+import { Link, useParams, useLocation, useNavigate } from "react-router-dom";
 import { api } from "../services/api";
 import { useAuth } from "../context/AuthContext";
 import ContributeModal from "../components/ContributeModal";
@@ -13,6 +13,8 @@ import VerificationBadge from "../components/VerificationBadge";
 import CampaignStatusBadge from "../components/CampaignStatusBadge";
 import { stellarExpertTxUrl } from "../config/stellar";
 import CampaignQRCode from "../components/CampaignQRCode";
+import { getNetwork, signTransaction } from '@stellar/freighter-api';
+import { isConnected, getPublicKey } from "@stellar/freighter-api";
 
 function escapeHtml(text) {
   return text
@@ -39,10 +41,10 @@ function markdownToHtml(markdown) {
 }
 
 function progressColor(pct, status) {
-  if (status === "funded" || pct >= 100) return "#10b981"; // green — goal reached
-  if (status === "closed" || status === "withdrawn") return "#6b7280"; // grey — ended
-  if (pct >= 75) return "#3b82f6"; // blue — nearly there
-  return "#7c3aed"; // default purple
+  if (status === 'funded' || pct >= 100) return '#10b981'; // green — goal reached
+  if (status === 'closed' || status === 'withdrawn' || status === 'refunded' || status === 'failed') return '#6b7280'; // grey — ended
+  if (pct >= 75) return '#3b82f6'; // blue — nearly there
+  return '#7c3aed'; // default purple
 }
 
 function ContributionRow({ c }) {
@@ -124,9 +126,12 @@ function ContributionRow({ c }) {
 }
 
 export default function Campaign() {
+  const contributeBtnRef = useRef(null);
   const { id } = useParams();
   const location = useLocation();
+  const navigate = useNavigate();
   const { user, token } = useAuth();
+  const contributeBtnRef = useRef(null);
   const [campaign, setCampaign] = useState(null);
   const [loadError, setLoadError] = useState("");
   const [contributions, setContributions] = useState(null);
@@ -136,6 +141,8 @@ export default function Campaign() {
   const [showDisputeModal, setShowDisputeModal] = useState(false);
   const [disputeSubmitted, setDisputeSubmitted] = useState(false);
   const [contributed, setContributed] = useState(false);
+  const contributeBtnRef = useRef(null);
+  const [freighterGuestMode, setFreighterGuestMode] = useState(false);
   const [showCreatedBanner, setShowCreatedBanner] = useState(
     !!location.state?.created,
   );
@@ -167,7 +174,12 @@ export default function Campaign() {
   const [editError, setEditError] = useState("");
   const [editSuccess, setEditSuccess] = useState("");
   const [editLoading, setEditLoading] = useState(false);
+  const [activeTab, setActiveTab] = useState("contributions");
+  const [editingUpdateId, setEditingUpdateId] = useState(null);
   const [analytics, setAnalytics] = useState(null);
+  const [refundBusy, setRefundBusy] = useState(false);
+  const [refundError, setRefundError] = useState("");
+  const [refundSuccess, setRefundSuccess] = useState("");
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [deleteConfirmation, setDeleteConfirmation] = useState("");
   const [deleteLoading, setDeleteLoading] = useState(false);
@@ -237,6 +249,7 @@ export default function Campaign() {
       "withdrawn",
       "failed",
       "completed",
+      "refunded",
     ].includes(campaign.status);
     if (isCampaignClosed) return;
 
@@ -340,6 +353,15 @@ export default function Campaign() {
       window.history.replaceState({}, document.title);
     }
   }, [location.state]);
+
+  async function handleClone() {
+    try {
+      const data = await api.getCloneData(id, token);
+      navigate('/campaigns/new', { state: { prefill: data } });
+    } catch (err) {
+      alert(err.message || 'Failed to fetch campaign clone data');
+    }
+  }
 
   async function handleInviteSubmit(e) {
     e.preventDefault();
@@ -469,6 +491,56 @@ export default function Campaign() {
     }
   }
 
+  async function handleInitiateRefund() {
+    setRefundBusy(true);
+    setRefundError("");
+    setRefundSuccess("");
+    try {
+      const initRes = await api.initiateRefund(campaign.id);
+      const unsignedXdr = initRes.unsigned_xdr;
+
+      let signedXdr = unsignedXdr;
+      if (user?.wallet_type === "freighter") {
+        const network = await getNetwork();
+        if (network?.error) throw new Error("Could not read Freighter network");
+
+        const signed = await signTransaction(unsignedXdr, {
+          networkPassphrase: network?.networkPassphrase,
+          address: user?.wallet_public_key,
+        });
+        if (signed?.error) throw new Error(signed.error?.message || "Freighter signing failed");
+        if (!signed?.signedTxXdr) throw new Error("Freighter did not return a signed transaction");
+
+        const approveRes = await api.approveRefundCreator(campaign.id, { signed_xdr: signed.signedTxXdr });
+        signedXdr = approveRes.signed_xdr;
+      } else {
+        const approveRes = await api.approveRefundCreator(campaign.id, {});
+        signedXdr = approveRes.signed_xdr;
+      }
+
+      let isPlatformApprover = false;
+      try {
+        const capRes = await api.getWithdrawalCapabilities();
+        if (capRes.can_approve_platform) {
+          isPlatformApprover = true;
+        }
+      } catch (err) {
+        // ignore
+      }
+
+      if (isPlatformApprover) {
+        await api.approveRefundPlatform(campaign.id);
+        setRefundSuccess("Campaign contributions successfully refunded!");
+      } else {
+        setRefundSuccess("Refund signed by creator. Awaiting platform release.");
+      }
+
+      const updatedCampaign = await api.getCampaign(campaign.id);
+      setCampaign(updatedCampaign);
+    } catch (err) {
+      setRefundError(err.message || "Failed to initiate refund.");
+    } finally {
+      setRefundBusy(false);
   async function handleDeleteCampaign() {
     setDeleteError("");
     if (!campaign) return;
@@ -545,28 +617,87 @@ export default function Campaign() {
     100,
     (campaign.raised_amount / campaign.target_amount) * 100,
   ).toFixed(1);
-  const canPostUpdate = user?.id && campaign.creator_id === user.id;
+  const currentUserId = user?.id || user?.userId;
+  const canPostUpdate =
+    currentUserId && String(campaign.creator_id) === String(currentUserId);
+
+  function canEditUpdate(update) {
+    return (
+      Date.now() - new Date(update.created_at).getTime() <= 24 * 60 * 60 * 1000
+    );
+  }
+
+  function startEditUpdate(update) {
+    setEditingUpdateId(update.id);
+    setUpdateForm({ title: update.title, body: update.body });
+    setUpdatesError("");
+  }
+
+  function cancelUpdateEdit() {
+    setEditingUpdateId(null);
+    setUpdateForm({ title: "", body: "" });
+    setUpdatesError("");
+  }
+
+  async function handleFreighterContribute() {
+    try {
+      const connected = await isConnected().then((r) => r?.isConnected ?? r).catch(() => false);
+      if (!connected) {
+        window.open('https://www.freighter.app/', '_blank', 'noopener,noreferrer');
+        return;
+      }
+      setFreighterGuestMode(true);
+      setShowModal(true);
+    } catch {
+      window.open('https://www.freighter.app/', '_blank', 'noopener,noreferrer');
+    }
+  }
 
   async function submitUpdate(e) {
     e.preventDefault();
     setUpdatesError("");
     setUpdateBusy(true);
+
     try {
-      await api.postCampaignUpdate(
-        campaign.id,
-        { title: updateForm.title.trim(), body: updateForm.body.trim() },
-        token,
-      );
+      if (editingUpdateId) {
+        const updated = await api.updateCampaignUpdate(
+          campaign.id,
+          editingUpdateId,
+          { title: updateForm.title.trim(), body: updateForm.body.trim() },
+        );
+
+        setUpdates((prev) =>
+          prev.map((item) => (item.id === editingUpdateId ? updated : item)),
+        );
+        setEditingUpdateId(null);
+      } else {
+        const created = await api.postCampaignUpdate(campaign.id, {
+          title: updateForm.title.trim(),
+          body: updateForm.body.trim(),
+        });
+
+        setUpdates((prev) => [created, ...prev]);
+      }
+
       setUpdateForm({ title: "", body: "" });
-      const list = await api.getCampaignUpdates(id, { limit: 20 });
-      setUpdates(list);
     } catch (err) {
-      setUpdatesError(err.message || "Could not publish update");
+      setUpdatesError(err.message || "Could not save update");
     } finally {
       setUpdateBusy(false);
     }
   }
 
+  async function deleteUpdate(updateId) {
+    if (!confirm("Delete this campaign update?")) return;
+
+    setUpdatesError("");
+    try {
+      await api.deleteCampaignUpdate(campaign.id, updateId);
+      setUpdates((prev) => prev.filter((item) => item.id !== updateId));
+    } catch (err) {
+      setUpdatesError(err.message || "Could not delete update");
+    }
+  }
   return (
     <main
       className="container"
@@ -627,6 +758,73 @@ export default function Campaign() {
           Contributions are closed and refunds can be requested.
         </div>
       )}
+      {campaign.status === "refunded" && (
+        <div
+          className="alert alert--success"
+          style={{ marginBottom: "1.25rem" }}
+          role="status"
+        >
+          <strong>Campaign refunded.</strong> This campaign was refunded — all contributions have been returned to their original senders.
+        </div>
+      )}
+      {campaign.status === "failed" &&
+        user &&
+        user.id === campaign.creator_id && (
+          <div
+            style={{
+              background: "var(--color-bg-card, #1e1e2f)",
+              border: "1px solid var(--color-border-light)",
+              borderRadius: "10px",
+              padding: "1.1rem 1.25rem",
+              marginBottom: "1.25rem",
+            }}
+          >
+            <p
+              style={{
+                margin: "0 0 0.75rem",
+                fontSize: "0.9rem",
+                color: "var(--color-text-secondary)",
+                lineHeight: 1.55,
+              }}
+            >
+              This campaign did not reach its goal. You can refund all
+              contributors — this will build and sign a Stellar transaction that
+              returns each contributor's exact amount.
+            </p>
+            {refundError && (
+              <p
+                className="alert alert--error"
+                style={{ marginBottom: "0.75rem", fontSize: "0.875rem" }}
+                role="alert"
+              >
+                {refundError}
+              </p>
+            )}
+            {refundSuccess && (
+              <p
+                className="alert alert--success"
+                style={{ marginBottom: "0.75rem", fontSize: "0.875rem" }}
+                role="status"
+              >
+                {refundSuccess}
+              </p>
+            )}
+            <button
+              id="btn-refund-contributors"
+              type="button"
+              className="btn-primary"
+              disabled={refundBusy}
+              onClick={handleInitiateRefund}
+              style={{
+                background: refundBusy ? undefined : "#dc2626",
+                borderColor: refundBusy ? undefined : "#dc2626",
+                fontSize: "0.9rem",
+              }}
+            >
+              {refundBusy ? "Processing refund…" : "Refund contributors"}
+            </button>
+          </div>
+        )}
       {campaign.creator_kyc_status !== "verified" && (
         <div
           className="alert alert--warning"
@@ -701,12 +899,16 @@ export default function Campaign() {
           style={styles.bar}
         >
           <div
-            style={{ ...styles.fill, width: `${pct}%` }}
+            style={{
+              ...styles.fill,
+              background: progressColor(parseFloat(pct), campaign.status),
+              width: `${pct}%`,
+            }}
             aria-hidden="true"
           />
         </div>
 
-        {user ? (
+        {user && !['failed', 'refunded', 'closed', 'withdrawn'].includes(campaign.status) ? (
           <button
             type="button"
             className="btn-primary"
@@ -717,7 +919,94 @@ export default function Campaign() {
           >
             Contribute
           </button>
+        ) : campaign.status === 'refunded' ? (
+          <p style={{ color: 'var(--color-text-secondary)', fontSize: '0.9rem', lineHeight: 1.5 }}>
+            This campaign has been <strong>refunded</strong>. All contributions were returned to their original senders.
+          </p>
+        ) : !user && !['failed', 'refunded', 'closed', 'withdrawn'].includes(campaign.status) ? (
+          <p style={{ color: 'var(--color-text-secondary)', fontSize: '0.9rem', lineHeight: 1.5 }}>
+            <Link to="/login" style={{ color: 'var(--color-accent)', fontWeight: 600 }}>Log in</Link> to contribute to this campaign.
+          </p>
         ) : (
+          <p style={{ color: 'var(--color-text-secondary)', fontSize: '0.9rem', lineHeight: 1.5 }}>
+            Contributions are closed while this campaign is{' '}
+        {(campaign.min_contribution || campaign.max_contribution) && (
+          <div
+            style={{
+              fontSize: "0.85rem",
+              color: "var(--color-text-secondary)",
+              marginBottom: "1rem",
+              background: "var(--color-surface)",
+              padding: "0.6rem",
+              borderRadius: "6px",
+              textAlign: "center",
+              border: "1px solid var(--color-border-lighter)",
+            }}
+          >
+            {campaign.min_contribution &&
+              `Min: ${Number(campaign.min_contribution).toLocaleString()} ${campaign.asset_type}`}
+            {campaign.min_contribution && campaign.max_contribution && " · "}
+            {campaign.max_contribution &&
+              `Max: ${Number(campaign.max_contribution).toLocaleString()} ${campaign.asset_type} per backer`}
+          </div>
+        )}
+
+        {campaign.status === "active" ? (
+          user ? (
+            <button
+              type="button"
+              className="btn-primary"
+              style={styles.cta}
+              ref={contributeBtnRef}
+              aria-label={`Contribute to ${campaign.title}`}
+              onClick={() => setShowModal(true)}
+            >
+              Contribute
+            </button>
+          ) : (
+            <p
+              style={{
+                color: "var(--color-text-secondary)",
+                fontSize: "0.9rem",
+                lineHeight: 1.5,
+              }}
+            >
+              <Link
+                to="/login"
+                state={{ from: `/campaigns/${id}` }}
+                style={{ color: "var(--color-accent)", fontWeight: 600 }}
+              >
+                Log in
+              </Link>{" "}
+              or{" "}
+              <Link
+                to="/register"
+                style={{ color: "var(--color-accent)", fontWeight: 600 }}
+              >
+                create an account
+              </Link>{" "}
+              to contribute. You can pay with your CrowdPay custodial wallet or
+              with Freighter when it is installed.
+            </p>
+          )
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
+            <Link
+              to="/login"
+              className="btn-primary"
+              style={{ ...styles.cta, textAlign: 'center', textDecoration: 'none', display: 'block' }}
+            >
+              Log in to contribute
+            </Link>
+            <button
+              type="button"
+              className="btn-secondary"
+              style={styles.cta}
+              onClick={handleFreighterContribute}
+            >
+              Contribute with Freighter
+            </button>
+          </div>
           <p
             style={{
               color: "var(--color-text-secondary)",
@@ -728,6 +1017,17 @@ export default function Campaign() {
             Contributions are closed while this campaign is{" "}
             <strong>{campaign.status}</strong>.
           </p>
+        )}
+
+        {user && (
+          <button
+            type="button"
+            className="btn-secondary"
+            style={{ ...styles.cta, marginTop: "0.75rem" }}
+            onClick={handleClone}
+          >
+            Clone campaign
+          </button>
         )}
       </div>
 
@@ -1271,57 +1571,31 @@ export default function Campaign() {
         </div>
       )}
 
-      <h2 style={styles.sectionTitle}>Updates ({updates.length})</h2>
-      {canPostUpdate && (
-        <form
-          onSubmit={submitUpdate}
-          className="campaign-card"
-          style={{ marginBottom: "1rem" }}
+      <div style={styles.tabs} role="tablist" aria-label="Campaign activity">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === "contributions"}
+          className={
+            activeTab === "contributions" ? "btn-primary" : "btn-secondary"
+          }
+          onClick={() => setActiveTab("contributions")}
+          style={styles.tabButton}
         >
-          <strong style={{ marginBottom: "0.5rem", display: "block" }}>
-            Post update
-          </strong>
-          <input
-            placeholder="Update title"
-            value={updateForm.title}
-            onChange={(e) =>
-              setUpdateForm((s) => ({ ...s, title: e.target.value }))
-            }
-            required
-            style={{ marginBottom: "0.5rem" }}
-          />
-          <textarea
-            placeholder="Write markdown update..."
-            value={updateForm.body}
-            onChange={(e) =>
-              setUpdateForm((s) => ({ ...s, body: e.target.value }))
-            }
-            rows={4}
-            required
-          />
-          {updatesError && (
-            <p className="alert alert--error" style={{ marginTop: "0.5rem" }}>
-              {updatesError}
-            </p>
-          )}
-          <button
-            type="submit"
-            className="btn-primary"
-            disabled={updateBusy}
-            style={{ marginTop: "0.5rem" }}
-          >
-            {updateBusy ? "Posting..." : "Post update"}
-          </button>
-        </form>
-      )}
-      {updates.length === 0 ? (
-        <p style={{ color: "var(--color-text-muted)", marginBottom: "1rem" }}>
-          No updates posted yet.
-        </p>
-      ) : (
-        <div
-          style={{ display: "grid", gap: "0.75rem", marginBottom: "1.25rem" }}
+          Contributions{" "}
+          {contributions !== null ? `(${totalContributions})` : ""}
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === "updates"}
+          className={activeTab === "updates" ? "btn-primary" : "btn-secondary"}
+          onClick={() => setActiveTab("updates")}
+          style={styles.tabButton}
         >
+          Updates ({updates.length})
+        </button>
+      </div>
           {updates.map((update) => (
             <article key={update.id} className="campaign-card">
               <div
@@ -1458,6 +1732,194 @@ export default function Campaign() {
         </div>
       )}
 
+      {activeTab === "updates" && (
+        <section role="tabpanel" style={{ marginBottom: "1.5rem" }}>
+          {canPostUpdate && (
+            <form
+              onSubmit={submitUpdate}
+              className="campaign-card"
+              style={{ marginBottom: "1rem" }}
+            >
+              <strong style={{ marginBottom: "0.5rem", display: "block" }}>
+                {editingUpdateId ? "Edit update" : "Post update"}
+              </strong>
+
+              <input
+                placeholder="Update title"
+                value={updateForm.title}
+                onChange={(e) =>
+                  setUpdateForm((s) => ({ ...s, title: e.target.value }))
+                }
+                required
+                style={{ marginBottom: "0.5rem" }}
+              />
+
+              <textarea
+                placeholder="Share a progress milestone, shipment update, or setback..."
+                value={updateForm.body}
+                onChange={(e) =>
+                  setUpdateForm((s) => ({ ...s, body: e.target.value }))
+                }
+                rows={4}
+                required
+              />
+
+              {updatesError && (
+                <p
+                  className="alert alert--error"
+                  style={{ marginTop: "0.5rem" }}
+                  role="alert"
+                >
+                  {updatesError}
+                </p>
+              )}
+
+              <div
+                style={{ display: "flex", gap: "0.5rem", marginTop: "0.5rem" }}
+              >
+                <button
+                  type="submit"
+                  className="btn-primary"
+                  disabled={updateBusy}
+                >
+                  {updateBusy
+                    ? "Saving..."
+                    : editingUpdateId
+                      ? "Save update"
+                      : "Post update"}
+                </button>
+
+                {editingUpdateId && (
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={cancelUpdateEdit}
+                  >
+                    Cancel
+                  </button>
+                )}
+              </div>
+            </form>
+          )}
+
+          {updates.length === 0 ? (
+            <p
+              style={{ color: "var(--color-text-muted)", marginBottom: "1rem" }}
+            >
+              No updates yet — the creator hasn't posted anything.
+            </p>
+          ) : (
+            <div
+              style={{
+                display: "grid",
+                gap: "0.75rem",
+                marginBottom: "1.25rem",
+              }}
+            >
+              {updates.map((update) => (
+                <article key={update.id} className="campaign-card">
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      gap: "0.5rem",
+                      flexWrap: "wrap",
+                    }}
+                  >
+                    <strong>{update.title}</strong>
+                    <span
+                      style={{
+                        color: "var(--color-text-hint)",
+                        fontSize: "0.85rem",
+                      }}
+                    >
+                      {update.author_name} •{" "}
+                      {new Date(update.created_at).toLocaleString()}
+                    </span>
+                  </div>
+
+                  <div
+                    style={{
+                      marginTop: "0.5rem",
+                      color: "var(--color-text-primary)",
+                      lineHeight: 1.5,
+                    }}
+                    dangerouslySetInnerHTML={{
+                      __html: markdownToHtml(update.body),
+                    }}
+                  />
+
+                  {canPostUpdate && (
+                    <div
+                      style={{
+                        display: "flex",
+                        gap: "0.5rem",
+                        marginTop: "0.75rem",
+                      }}
+                    >
+                      {canEditUpdate(update) && (
+                        <button
+                          type="button"
+                          className="btn-secondary"
+                          onClick={() => startEditUpdate(update)}
+                          style={{
+                            fontSize: "0.85rem",
+                            padding: "0.4rem 0.75rem",
+                          }}
+                        >
+                          Edit
+                        </button>
+                      )}
+
+                      <button
+                        type="button"
+                        className="btn-secondary"
+                        onClick={() => deleteUpdate(update.id)}
+                        style={{
+                          fontSize: "0.85rem",
+                          padding: "0.4rem 0.75rem",
+                          color: "var(--color-status-error)",
+                          borderColor: "var(--color-status-error)",
+                        }}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  )}
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+
+      {activeTab === "contributions" && (
+        <section role="tabpanel">
+          <h2 style={styles.sectionTitle}>
+            Backer Wall{" "}
+            {contributions !== null ? `(${totalContributions})` : ""}
+            {isLive && (
+              <span style={styles.liveIndicator} title="Live updates active">
+                <span style={styles.liveDot} />
+                Live
+              </span>
+            )}
+          </h2>
+
+          {contributions === null ? (
+            <ContributionListSkeleton />
+          ) : contributions.length === 0 ? (
+            <div style={styles.emptyBackers}>
+              <p>Be the first to back this!</p>
+              <p
+                style={{
+                  fontSize: "0.9rem",
+                  color: "var(--color-text-secondary)",
+                  marginTop: "0.25rem",
+                }}
+              >
+                Every contribution counts towards making this goal a reality.
+              </p>
       <h2 style={styles.sectionTitle}>
         Backer Wall {contributions !== null ? `(${totalContributions})` : ""}
         {isLive && (
@@ -1510,15 +1972,48 @@ export default function Campaign() {
                 {showAll ? "Show less" : `Show all (${totalContributions})`}
               </button>
             </div>
+          ) : (
+            <>
+              <div style={styles.list}>
+                {contributions.map((c) => (
+                  <ContributionRow key={c.id} c={c} />
+                ))}
+              </div>
+
+              {totalContributions > 10 && (
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "center",
+                    marginTop: "1rem",
+                  }}
+                >
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={() => setShowAll((prev) => !prev)}
+                    style={{
+                      padding: "0.5rem 1.5rem",
+                      fontSize: "0.9rem",
+                      cursor: "pointer",
+                    }}
+                  >
+                    {showAll ? "Show less" : `Show all (${totalContributions})`}
+                  </button>
+                </div>
+              )}
+            </>
           )}
-        </>
+        </section>
       )}
 
       {showModal && (
         <ContributeModal
           campaign={campaign}
+          guestFreighterMode={freighterGuestMode}
           onClose={() => {
             setShowModal(false);
+            setFreighterGuestMode(false);
             contributeBtnRef.current?.focus();
           }}
           onSuccess={() => setContributed((v) => !v)}
@@ -2152,5 +2647,17 @@ const styles = {
     fontSize: "0.9rem",
     fontWeight: 800,
     flexShrink: 0,
+  },
+  tabs: {
+    display: "flex",
+    gap: "0.75rem",
+    marginBottom: "1rem",
+    borderBottom: "1px solid var(--color-border-light)",
+    paddingBottom: "0.75rem",
+  },
+  tabButton: {
+    flex: 1,
+    fontSize: "0.9rem",
+    justifyContent: "center",
   },
 };

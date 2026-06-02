@@ -23,6 +23,8 @@ const {
   USDC,
   isTestnet,
   configuredAssets,
+} = require('../config/stellar');
+const Sentry = require('@sentry/node');
 } = require("../config/stellar");
 
 const PLATFORM_KEYPAIR = Keypair.fromSecret(process.env.PLATFORM_SECRET_KEY);
@@ -461,6 +463,38 @@ async function buildWithdrawalTransaction({
   return tx.toXDR();
 }
 
+/**
+ * Build a batch refund transaction for a campaign wallet returning funds to multiple contributors.
+ * Returns the unsigned XDR.
+ */
+async function buildBatchRefundTransaction({
+  campaignWalletPublicKey,
+  refunds,
+}) {
+  const campaignAccount = await server.loadAccount(campaignWalletPublicKey);
+  const builder = new TransactionBuilder(campaignAccount, {
+    fee: BASE_FEE,
+    networkPassphrase,
+  });
+
+  for (const refund of refunds) {
+    const stellarAsset = toStellarAsset(refund.asset);
+    builder.addOperation(
+      Operation.payment({
+        destination: refund.destinationPublicKey,
+        asset: stellarAsset,
+        amount: String(refund.amount),
+      })
+    );
+  }
+
+  const tx = builder
+    .setTimeout(60 * 60 * 24 * 7) // 7 days
+    .build();
+
+  return tx.toXDR();
+}
+
 async function getAccountMultisigConfig(publicKey) {
   const account = await server.loadAccount(publicKey);
   return {
@@ -532,8 +566,17 @@ async function submitWithFeeBumpFallback(innerXdr) {
 
 async function submitPreparedTransaction(xdr) {
   const tx = TransactionBuilder.fromXDR(xdr, networkPassphrase);
-  const result = await server.submitTransaction(tx);
-  return result.hash;
+  try {
+    const result = await server.submitTransaction(tx);
+    return result.hash;
+  } catch (err) {
+    Sentry.withScope((scope) => {
+      scope.setTag('stellar.network', process.env.STELLAR_NETWORK);
+      scope.setExtra('tx_hash', tx.hash().toString('hex'));
+      Sentry.captureException(err);
+    });
+    throw err;
+  }
 }
 
 async function submitSignedWithdrawal({ xdr }) {
@@ -650,5 +693,6 @@ module.exports = {
 
   getCampaignBalance,
   friendbotFund,
+  buildBatchRefundTransaction,
   PLATFORM_PUBLIC_KEY: PLATFORM_KEYPAIR.publicKey(),
 };

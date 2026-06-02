@@ -8,6 +8,21 @@ const {
   getCampaignBalance,
   getSupportedAssetCodes,
   buildWithdrawalTransaction,
+  buildBatchRefundTransaction,
+  signTransactionXdr,
+  submitPreparedTransaction,
+} = require('../services/stellarService');
+const { withDecryptedWalletSecret } = require('../services/walletSecrets');
+const { encryptSecret } = require('../services/walletService');
+const { watchCampaignWallet, addSSEClient, removeSSEClient } = require('../services/ledgerMonitor');
+const { emitWebhookEventForUser, WEBHOOK_EVENTS } = require('../services/webhookDispatcher');
+const { refreshCampaignStatus, refreshActiveCampaignStatuses } = require('../services/campaignStatusService');
+const { invokeContract, encodeMilestone, nativeToScVal } = require('../services/sorobanService');
+const { insertWithdrawalPendingSignatures } = require('../services/stellarTransactionService');
+const { sendEmail } = require('../services/emailService');
+const { uploadCampaignCoverImage } = require('../services/storage');
+const { isKycRequiredForCampaigns } = require('../services/kycProvider');
+const { listCreatorCampaigns } = require('../services/userDashboardService');
 } = require("../services/stellarService");
 const { encryptSecret } = require("../services/walletService");
 const {
@@ -40,8 +55,9 @@ const {
   createCampaignUpdateValidation,
   getCampaignsValidation,
   validateRequest,
-} = require("../middleware/validation");
-const asyncHandler = require("../utils/asyncHandler");
+} = require('../middleware/validation');
+const asyncHandler = require('../utils/asyncHandler');
+const cache = require('../utils/cache');
 
 const crypto = require("crypto");
 
@@ -195,6 +211,84 @@ async function logWithdrawalEvent(
 }
 
 // List campaigns with optional search, filtering, sorting, and pagination
+router.get('/', getCampaignsValidation, validateRequest, asyncHandler(async (req, res) => {
+  /**
+   * @openapi
+   * /api/campaigns:
+   *   get:
+   *     tags: [Campaigns]
+   *     summary: List campaigns
+   *     parameters:
+   *       - in: query
+   *         name: status
+   *         schema: { type: string }
+   *       - in: query
+   *         name: asset
+   *         schema: { type: string }
+   *       - in: query
+   *         name: search
+   *         schema: { type: string }
+   *       - in: query
+   *         name: sort
+   *         schema: { type: string }
+   *       - in: query
+   *         name: limit
+   *         schema: { type: integer, minimum: 1, maximum: 50 }
+   *       - in: query
+   *         name: offset
+   *         schema: { type: integer, minimum: 0 }
+   *     responses:
+   *       200:
+   *         description: OK
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 total: { type: integer }
+   *                 limit: { type: integer }
+   *                 offset: { type: integer }
+   *                 campaigns:
+   *                   type: array
+   *                   items:
+   *                     type: object
+   */
+  const { search, status, asset, sort = 'newest' } = req.query;
+  const searchTerm = typeof search === 'string' ? search.trim() : '';
+  const { search, status, asset, category, sort = 'newest' } = req.query;
+  const limit = Math.min(Number(req.query.limit || 20), 100);
+  const offset = Math.max(Number(req.query.offset || 0), 0);
+
+  const cacheKey = `campaigns:list:${JSON.stringify(req.query)}`;
+  const cached = cache.get(cacheKey);
+  if (cached) return res.json(cached);
+
+  const filters = [];
+  const params = [];
+  let searchParamRef = null;
+
+  // Exclude deleted campaigns from public listing
+  filters.push(`c.deleted_at IS NULL`);
+
+  if (status) {
+    params.push(status);
+    filters.push(`c.status = $${params.length}`);
+  } else {
+    filters.push(`c.status = 'active'`);
+  }
+  if (asset) {
+    params.push(asset);
+    filters.push(`c.asset_type = $${params.length}`);
+  }
+  if (searchTerm) {
+    params.push(searchTerm);
+    searchParamRef = `$${params.length}`;
+    filters.push(`c.search_vector @@ plainto_tsquery('english', ${searchParamRef})`);
+  }
+  if (category) {
+    params.push(category);
+    filters.push(`c.category = $${params.length}`);
+  }
 router.get(
   "/",
   getCampaignsValidation,
@@ -284,11 +378,75 @@ router.get(
     };
     const orderBy = sortExpressions[sort] || sortExpressions.newest;
 
+  const whereClause = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
+  const countQuery = `SELECT COUNT(*)::int AS total FROM campaigns c ${whereClause}`;
+  const countResult = await db.query(countQuery, params);
+  const total = countResult.rows[0]?.total || 0;
+
+  const sortExpressions = {
+    newest: 'c.created_at DESC',
+    ending_soon: 'c.deadline ASC NULLS LAST',
+    most_funded: 'c.raised_amount DESC',
+    funded: 'c.raised_amount DESC',
+    most_backed: '(SELECT COUNT(*) FROM contributions ctr WHERE ctr.campaign_id = c.id) DESC',
+    closest_to_goal: '(c.raised_amount / NULLIF(c.target_amount, 0)) DESC NULLS LAST, c.raised_amount DESC',
+  };
+  const orderBy = searchParamRef
+    ? `ts_rank(c.search_vector, plainto_tsquery('english', ${searchParamRef})) DESC, c.created_at DESC`
+    : (sortExpressions[sort] || sortExpressions.newest);
+
+  let query;
+  if (sort === 'trending') {
+    query = `
+      WITH recent AS (
+        SELECT
+          campaign_id,
+          COUNT(*)::int AS recent_count,
+          COALESCE(SUM(amount), 0) AS recent_volume
+        FROM contributions
+        WHERE created_at >= NOW() - INTERVAL '48 hours'
+        GROUP BY campaign_id
+      )
+      SELECT c.*,
+             u.name AS creator_name,
+             u.kyc_status AS creator_kyc_status,
+             (SELECT COUNT(*)::int FROM campaign_updates cu WHERE cu.campaign_id = c.id) AS updates_count,
+             (SELECT COUNT(DISTINCT sender_public_key)::int FROM contributions con WHERE con.campaign_id = c.id) AS contributor_count,
+             COALESCE(r.recent_count, 0) AS recent_contributions,
+             COALESCE(r.recent_count, 0) AS "recentContributions",
+             COALESCE(r.recent_volume, 0) AS recent_volume,
+             (COALESCE(r.recent_volume, 0) * 2 + (c.raised_amount / NULLIF(c.target_amount, 0) * 100)) AS trending_score
+      FROM campaigns c
+      JOIN users u ON u.id = c.creator_id
+      LEFT JOIN recent r ON r.campaign_id = c.id
+      ${whereClause}
+      ORDER BY trending_score DESC, c.created_at DESC
+      LIMIT $${params.length + 1}
+      OFFSET $${params.length + 2}
+    `;
+  } else {
+    const orderBy = sortExpressions[sort] || sortExpressions.newest;
+    query = `
+      SELECT c.*,
+             u.name AS creator_name,
+             u.kyc_status AS creator_kyc_status,
+             (SELECT COUNT(*)::int FROM campaign_updates cu WHERE cu.campaign_id = c.id) AS updates_count,
+             (SELECT COUNT(DISTINCT sender_public_key)::int FROM contributions con WHERE con.campaign_id = c.id) AS contributor_count
+      FROM campaigns c
+      JOIN users u ON u.id = c.creator_id
+      ${whereClause}
+      ORDER BY ${orderBy}
+      LIMIT $${params.length + 1}
+      OFFSET $${params.length + 2}
+    `;
+  }
+  const result = await db.query(query, [...params, limit, offset]);
     const query = `
     SELECT c.*,
            u.name AS creator_name,
            u.kyc_status AS creator_kyc_status,
-           (SELECT COUNT(*)::int FROM campaign_updates cu WHERE cu.campaign_id = c.id) AS updates_count,
+           (SELECT MAX(cu.created_at) FROM campaign_updates cu WHERE cu.campaign_id = c.id) AS latest_update_at,
+           (SELECT COUNT(*)::int FROM campaign_updates cu WHERE cu.campaign_id = c.id) AS update_count,
            (SELECT COUNT(DISTINCT sender_public_key)::int FROM contributions con WHERE con.campaign_id = c.id) AS contributor_count
     FROM campaigns c
     JOIN users u ON u.id = c.creator_id
@@ -299,6 +457,10 @@ router.get(
   `;
     const result = await db.query(query, [...params, limit, offset]);
 
+  const payload = { total, limit, offset, campaigns: result.rows };
+  cache.set(cacheKey, payload, 30_000); // 30 s TTL
+  res.json(payload);
+}));
     res.json({ total, limit, offset, campaigns: result.rows });
   }),
 );
@@ -312,6 +474,21 @@ router.get(
   }),
 );
 
+// Category counts for active campaigns
+router.get('/categories', asyncHandler(async (req, res) => {
+  const { rows } = await db.query(
+    `SELECT category, COUNT(*)::int AS count
+     FROM campaigns
+     WHERE status = 'active' AND category IS NOT NULL AND deleted_at IS NULL
+     GROUP BY category
+     ORDER BY count DESC`
+  );
+  res.json(rows);
+}));
+
+router.get('/:id/milestones', asyncHandler(async (req, res) => {
+  const { rows } = await db.query(
+    `SELECT m.*, (c.milestones_contract_id IS NOT NULL) AS on_chain
 router.get(
   "/:id/milestones",
   asyncHandler(async (req, res) => {
@@ -417,7 +594,59 @@ router.post(
   }),
 );
 
+// Get clone data for campaign
+router.get('/:id/clone-data', requireAuth, asyncHandler(async (req, res) => {
+  const { rows } = await db.query(
+    `SELECT title, description, target_amount, asset_type, min_contribution, max_contribution, show_backer_amounts, deleted_at
+     FROM campaigns WHERE id = $1`,
+    [req.params.id]
+  );
+  if (!rows.length || rows[0].deleted_at) {
+    return res.status(404).json({ error: 'Campaign not found' });
+  }
+
+  res.json({
+    title: `${rows[0].title} (copy)`,
+    description: rows[0].description,
+    target_amount: rows[0].target_amount,
+    asset_type: rows[0].asset_type,
+    min_contribution: rows[0].min_contribution,
+    max_contribution: rows[0].max_contribution,
+    show_backer_amounts: rows[0].show_backer_amounts,
+  });
+}));
+
 // Get single Campaign
+router.get('/:id', asyncHandler(async (req, res) => {
+  /**
+   * @openapi
+   * /api/campaigns/{id}:
+   *   get:
+   *     tags: [Campaigns]
+   *     summary: Get campaign by id
+   *     parameters:
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema: { type: string }
+   *     responses:
+   *       200:
+   *         description: OK
+   *       404:
+   *         description: Not found
+   */
+  const campaignId = req.params.id;
+  const isAuthenticated = !!req.headers.authorization?.startsWith('Bearer ');
+  const cacheKey = `campaigns:id:${campaignId}`;
+
+  // Only serve cached response for unauthenticated requests — authenticated
+  // requests need user_role which is caller-specific.
+  if (!isAuthenticated) {
+    const cached = cache.get(cacheKey);
+    if (cached) return res.json(cached);
+  }
+
+  const query = `
 router.get(
   "/:id",
   asyncHandler(async (req, res) => {
@@ -445,10 +674,18 @@ router.get(
     JOIN users u ON u.id = c.creator_id
     WHERE c.id = $1 AND c.deleted_at IS NULL
   `;
-    await refreshCampaignStatus(req.params.id);
-    const { rows } = await db.query(query, [req.params.id]);
-    if (!rows.length)
-      return res.status(404).json({ error: "Campaign not found" });
+  await refreshCampaignStatus(campaignId);
+  const { rows } = await db.query(query, [campaignId]);
+  if (!rows.length) return res.status(404).json({ error: 'Campaign not found' });
+  
+  const campaign = rows[0];
+  
+  // Allow viewing suspended campaigns with a notice, but deleted campaigns are not accessible
+  if (campaign.deleted_at) {
+    return res.status(404).json({ error: 'Campaign not found' });
+  }
+  
+  let userRole = null;
 
     const campaign = rows[0];
 
@@ -494,9 +731,13 @@ router.get(
         "This campaign has been suspended and cannot receive new contributions";
     }
 
-    res.json(response);
-  }),
-);
+  // Cache the public view (no user_role) for unauthenticated visitors
+  if (!isAuthenticated) {
+    cache.set(cacheKey, response, 15_000); // 15 s TTL
+  }
+
+  res.json(response);
+}));
 
 // Embeddable campaign widget data (public, with permissive CORS)
 router.get(
@@ -801,6 +1042,55 @@ router.post(
 );
 
 // Create campaign (authenticated)
+router.post('/', requireAuth, requireRole('creator', 'admin'), createCampaignValidation, validateRequest, asyncHandler(async (req, res) => {
+  /**
+   * @openapi
+   * /api/campaigns:
+   *   post:
+   *     tags: [Campaigns]
+   *     summary: Create campaign
+   *     security:
+   *       - bearerAuth: []
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required: [title, target_amount, asset_type]
+   *             properties:
+   *               title: { type: string }
+   *               description: { type: string, nullable: true }
+   *               target_amount: { type: string }
+   *               asset_type: { type: string }
+   *               deadline: { type: string, nullable: true }
+   *               milestones: { type: array, items: { type: object }, nullable: true }
+   *               min_contribution: { type: string, nullable: true }
+   *               max_contribution: { type: string, nullable: true }
+   *     responses:
+   *       201:
+   *         description: Created
+   *       401:
+   *         description: Unauthorized
+   *       403:
+   *         description: Forbidden
+   */
+  const { title, description, target_amount, asset_type, deadline, milestones, min_contribution, max_contribution, max_per_user } = req.body;
+
+  if (deadline) {
+    const [year, month, day] = String(deadline).split('-').map(Number);
+    const deadlineDate = new Date(year, month - 1, day);
+    const todayDate = new Date();
+    todayDate.setHours(0, 0, 0, 0);
+
+    if (
+      Number.isNaN(deadlineDate.getTime()) ||
+      deadlineDate.getFullYear() !== year ||
+      deadlineDate.getMonth() + 1 !== month ||
+      deadlineDate.getDate() !== day ||
+      deadlineDate < todayDate
+    ) {
+      return res.status(400).json({ error: 'deadline must be a future date' });
 router.post(
   "/",
   requireAuth,
@@ -912,8 +1202,8 @@ router.post(
       const { rows } = await client.query(
         `INSERT INTO campaigns
          (title, description, target_amount, asset_type, wallet_public_key, creator_id, deadline, 
-          min_contribution, max_contribution, escrow_contract_id, milestones_contract_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+          min_contribution, max_contribution, max_per_user, escrow_contract_id, milestones_contract_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
        RETURNING *`,
         [
           title,
@@ -996,9 +1286,11 @@ router.post(
 
     watchCampaignWallet(campaign.id, wallet.publicKey);
 
-    res.status(201).json(campaign);
-  }),
-);
+  // New campaign — bust the list cache so it appears immediately
+  cache.invalidatePrefix('campaigns:list:');
+
+  res.status(201).json(campaign);
+}));
 
 // PATCH /campaigns/:id - Update campaign (title, description, deadline)
 router.patch(
@@ -1546,6 +1838,11 @@ router.post('/:id/webhooks', requireAuth, requireCampaignMember('owner'), asyncH
   // Check if campaign exists
   const { rows: campaignRows } = await db.query(
     'SELECT id FROM campaigns WHERE id = $1',
+// POST /campaigns/:id/refund/initiate - Creator requests a batch refund XDR
+router.post('/:id/refund/initiate', requireAuth, requireCampaignMember('owner'), asyncHandler(async (req, res) => {
+  const campaignId = req.params.id;
+  const { rows: campaignRows } = await db.query(
+    'SELECT id, wallet_public_key, status, refund_initiated_at FROM campaigns WHERE id = $1',
     [campaignId]
   );
   if (!campaignRows.length) {
@@ -1588,6 +1885,59 @@ router.get('/:id/webhooks', requireAuth, requireCampaignMember('owner'), asyncHa
 
   const { rows: campaignRows } = await db.query(
     'SELECT id FROM campaigns WHERE id = $1',
+  const campaign = campaignRows[0];
+
+  if (campaign.status !== 'failed') {
+    return res.status(409).json({ error: 'Refunds may only be initiated for failed campaigns' });
+  }
+  if (campaign.refund_initiated_at) {
+    return res.status(409).json({ error: 'Refund has already been initiated' });
+  }
+
+  const { rows: contributions } = await db.query(
+    `SELECT id, sender_public_key, amount, asset 
+     FROM contributions 
+     WHERE campaign_id = $1 AND refunded = FALSE 
+     ORDER BY created_at ASC`,
+    [campaignId]
+  );
+
+  if (!contributions.length) {
+    return res.status(400).json({ error: 'No contributions to refund' });
+  }
+
+  const refunds = contributions.map(c => ({
+    destinationPublicKey: c.sender_public_key,
+    amount: c.amount,
+    asset: c.asset,
+  }));
+
+  let unsignedXdr;
+  try {
+    unsignedXdr = await buildBatchRefundTransaction({
+      campaignWalletPublicKey: campaign.wallet_public_key,
+      refunds,
+    });
+  } catch (err) {
+    logger.error('Failed to build batch refund transaction', { campaign_id: campaignId, error: err.message });
+    return res.status(500).json({ error: 'Could not construct Stellar transaction' });
+  }
+
+  await db.query(
+    `UPDATE campaigns 
+     SET refund_xdr = $1, refund_initiated_at = NOW() 
+     WHERE id = $2`,
+    [unsignedXdr, campaignId]
+  );
+
+  res.status(200).json({ unsigned_xdr: unsignedXdr });
+}));
+
+// POST /campaigns/:id/refund/approve/creator - Creator signs the batch refund XDR
+router.post('/:id/refund/approve/creator', requireAuth, requireCampaignMember('owner'), asyncHandler(async (req, res) => {
+  const campaignId = req.params.id;
+  const { rows: campaignRows } = await db.query(
+    'SELECT id, refund_xdr, status FROM campaigns WHERE id = $1',
     [campaignId]
   );
   if (!campaignRows.length) {
@@ -1662,6 +2012,147 @@ router.get('/:id/webhooks/:wid/deliveries', requireAuth, requireCampaignMember('
     offset,
     deliveries: rows
   });
+  const campaign = campaignRows[0];
+
+  if (campaign.status !== 'failed') {
+    return res.status(409).json({ error: 'Campaign status is not failed' });
+  }
+  if (!campaign.refund_xdr) {
+    return res.status(409).json({ error: 'Refund has not been initiated' });
+  }
+
+  const { rows: users } = await db.query(
+    'SELECT wallet_secret_encrypted, wallet_public_key, wallet_type FROM users WHERE id = $1',
+    [req.user.userId]
+  );
+  if (!users.length) {
+    return res.status(404).json({ error: 'Creator not found' });
+  }
+  const userRow = users[0];
+
+  let signedXdr;
+  try {
+    if (userRow.wallet_type === 'freighter') {
+      const { signed_xdr } = req.body || {};
+      if (!signed_xdr) {
+        return res.status(400).json({ error: 'signed_xdr is required for freighter users' });
+      }
+
+      try {
+        const tx = require('@stellar/stellar-sdk').TransactionBuilder.fromXDR(
+          signed_xdr,
+          require('../config/stellar').networkPassphrase
+        );
+        const signer = require('@stellar/stellar-sdk').Keypair.fromPublicKey(userRow.wallet_public_key);
+        const signatureValid = tx.signatures.some((decorated) => {
+          try {
+            return signer.verify(tx.hash(), decorated.signature());
+          } catch (_err) {
+            return false;
+          }
+        });
+        if (!signatureValid) {
+          return res.status(422).json({ error: 'Signed transaction does not include a valid signature by the creator' });
+        }
+      } catch (err) {
+        return res.status(422).json({ error: 'Invalid signed_xdr' });
+      }
+      signedXdr = signed_xdr;
+    } else {
+      signedXdr = await withDecryptedWalletSecret(
+        userRow.wallet_secret_encrypted,
+        {
+          userId: req.user.userId,
+          walletPublicKey: userRow.wallet_public_key,
+        },
+        async (creatorSecret) =>
+          signTransactionXdr({
+            xdr: campaign.refund_xdr,
+            signerSecret: creatorSecret,
+          })
+      );
+    }
+  } catch (err) {
+    logger.error('Creator refund signing failed', { campaign_id: campaignId, error: err.message });
+    return res.status(503).json({ error: 'Signing failed' });
+  }
+
+  await db.query(
+    'UPDATE campaigns SET refund_xdr = $1 WHERE id = $2',
+    [signedXdr, campaignId]
+  );
+
+  res.status(200).json({ signed_xdr: signedXdr });
+}));
+
+// POST /campaigns/:id/refund/approve/platform - Platform signs and submits
+router.post('/:id/refund/approve/platform', requireAuth, asyncHandler(async (req, res) => {
+  const campaignId = req.params.id;
+
+  if (!process.env.PLATFORM_APPROVER_USER_ID || req.user.userId !== process.env.PLATFORM_APPROVER_USER_ID) {
+    return res.status(403).json({ error: 'Only the designated platform approver can perform this action' });
+  }
+
+  const { rows: campaignRows } = await db.query(
+    'SELECT id, wallet_public_key, refund_xdr, status FROM campaigns WHERE id = $1',
+    [campaignId]
+  );
+  if (!campaignRows.length) {
+    return res.status(404).json({ error: 'Campaign not found' });
+  }
+  const campaign = campaignRows[0];
+
+  if (campaign.status !== 'failed') {
+    return res.status(409).json({ error: 'Campaign status is not failed' });
+  }
+  if (!campaign.refund_xdr) {
+    return res.status(409).json({ error: 'Refund has not been approved by the creator yet' });
+  }
+
+  let signedXdr;
+  try {
+    signedXdr = signTransactionXdr({
+      xdr: campaign.refund_xdr,
+      signerSecret: process.env.PLATFORM_SECRET_KEY,
+    });
+  } catch (err) {
+    logger.error('Platform refund signing failed', { campaign_id: campaignId, error: err.message });
+    return res.status(500).json({ error: 'Platform signing failed' });
+  }
+
+  let txHash;
+  try {
+    txHash = await submitPreparedTransaction(signedXdr);
+  } catch (err) {
+    logger.error('Platform refund submission failed', { campaign_id: campaignId, error: err.message });
+    return res.status(502).json({ error: `Stellar submission failed: ${err.message}` });
+  }
+
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(
+      `UPDATE campaigns 
+       SET status = 'refunded', refund_tx_hash = $1, refund_xdr = $2 
+       WHERE id = $3`,
+      [txHash, signedXdr, campaignId]
+    );
+    await client.query(
+      `UPDATE contributions 
+       SET refunded = TRUE 
+       WHERE campaign_id = $1 AND refunded = FALSE`,
+      [campaignId]
+    );
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    logger.error('Failed to update database after batch refund submission', { campaign_id: campaignId, error: err.message });
+    return res.status(500).json({ error: 'Stellar transaction submitted but failed to update database' });
+  } finally {
+    client.release();
+  }
+
+  res.status(200).json({ success: true, tx_hash: txHash });
 }));
 
 module.exports = router;
