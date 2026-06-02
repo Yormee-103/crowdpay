@@ -309,12 +309,15 @@ test('GET /api/campaigns supports search, asset filter, and sort', async () => {
   assert.equal(response.body.campaigns.length, 1);
   const listQuery = queries.find((q) => q.text.includes('ORDER BY'));
   assert.ok(listQuery);
-  assert.match(listQuery.text, /ILIKE/i);
-  assert.match(listQuery.text, /raised_amount \/ NULLIF/i);
-  assert.ok(listQuery.params.includes('%solar%'));
+  assert.match(listQuery.text, /search_vector @@ plainto_tsquery/i);
+  assert.match(listQuery.text, /ts_rank\(c\.search_vector/i);
+  assert.match(listQuery.text, /c\.created_at DESC/);
+  assert.doesNotMatch(listQuery.text, /raised_amount \/ NULLIF/i);
+  assert.ok(listQuery.params.includes('solar'));
   assert.ok(listQuery.params.includes('USDC'));
 });
 
+test('GET /api/campaigns uses plainto_tsquery for multi-word search', async () => {
 test('GET /api/campaigns supports sort=trending with CTE query', async () => {
 test('GET /api/campaigns/categories returns category counts', async () => {
   const app = buildApp({
@@ -342,6 +345,22 @@ test('GET /api/campaigns supports category filter', async () => {
   const app = buildApp({
     queryImpl: async (text, params) => {
       queries.push({ text, params });
+      if (text.includes('COUNT(*)')) {
+        return { rows: [{ total: 0 }] };
+      }
+      return { rows: [] };
+    },
+  });
+
+  const response = await request(app).get(
+    '/api/campaigns?search=clean%20energy%20project'
+  );
+
+  assert.equal(response.status, 200);
+  const listQuery = queries.find((q) => q.text.includes('plainto_tsquery'));
+  assert.ok(listQuery);
+  assert.ok(listQuery.params.includes('clean energy project'));
+});
       if (text.includes('COUNT(*)::int AS total')) {
       if (text.includes('AS total')) {
         return { rows: [{ total: 1 }] };

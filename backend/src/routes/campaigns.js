@@ -237,11 +237,14 @@ router.get('/', getCampaignsValidation, validateRequest, asyncHandler(async (req
    *                   items:
    *                     type: object
    */
+  const { search, status, asset, sort = 'newest' } = req.query;
+  const searchTerm = typeof search === 'string' ? search.trim() : '';
   const { search, status, asset, category, sort = 'newest' } = req.query;
   const limit = Math.min(Number(req.query.limit || 20), 100);
   const offset = Math.max(Number(req.query.offset || 0), 0);
   const filters = [];
   const params = [];
+  let searchParamRef = null;
 
   // Exclude deleted campaigns from public listing
   filters.push(`c.deleted_at IS NULL`);
@@ -256,12 +259,10 @@ router.get('/', getCampaignsValidation, validateRequest, asyncHandler(async (req
     params.push(asset);
     filters.push(`c.asset_type = $${params.length}`);
   }
-  if (search) {
-    const escaped = String(search).replace(/[%_\\]/g, '\\$&');
-    params.push(`%${escaped}%`);
-    filters.push(
-      `(c.title ILIKE $${params.length} OR COALESCE(c.description, '') ILIKE $${params.length})`
-    );
+  if (searchTerm) {
+    params.push(searchTerm);
+    searchParamRef = `$${params.length}`;
+    filters.push(`c.search_vector @@ plainto_tsquery('english', ${searchParamRef})`);
   }
   if (category) {
     params.push(category);
@@ -369,6 +370,9 @@ router.get(
     most_backed: '(SELECT COUNT(*) FROM contributions ctr WHERE ctr.campaign_id = c.id) DESC',
     closest_to_goal: '(c.raised_amount / NULLIF(c.target_amount, 0)) DESC NULLS LAST, c.raised_amount DESC',
   };
+  const orderBy = searchParamRef
+    ? `ts_rank(c.search_vector, plainto_tsquery('english', ${searchParamRef})) DESC, c.created_at DESC`
+    : (sortExpressions[sort] || sortExpressions.newest);
 
   let query;
   if (sort === 'trending') {
