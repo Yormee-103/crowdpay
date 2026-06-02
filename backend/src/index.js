@@ -7,6 +7,7 @@ Sentry.init({
   environment: process.env.NODE_ENV || 'development',
   tracesSampleRate: process.env.NODE_ENV === 'production' ? 0.2 : 1.0,
   enabled: !!process.env.SENTRY_DSN,
+  integrations: [Sentry.expressIntegration()],
 });
 
 const path = require('path');
@@ -37,8 +38,7 @@ app.use(
 );
 app.use(express.json({ limit: '50kb' }));
 app.use(cookieParser());
-app.use(Sentry.Handlers.requestHandler());
-app.use(Sentry.Handlers.tracingHandler());
+app.use(Sentry.sentryRequestMiddleware ? Sentry.sentryRequestMiddleware() : (req, res, next) => next());
 app.use(requestIdMiddleware);
 app.use(requestLogger);
 app.use(normalizeErrorResponse);
@@ -161,7 +161,7 @@ if (process.env.SERVE_FRONTEND === 'true') {
   });
 }
 
-app.use(Sentry.Handlers.errorHandler());
+app.use(Sentry.expressErrorHandler());
 app.use(errorHandler);
 
 const { startWebhookRetryPoller } = require('./services/webhookDispatcher');
