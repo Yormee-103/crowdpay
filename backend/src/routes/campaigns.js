@@ -342,6 +342,23 @@ router.post('/:id/milestones', requireAuth, requireCampaignMember('owner'), asyn
   }
 }));
 
+// Public embeddable campaign widget data
+router.get('/:id/widget', asyncHandler(async (req, res) => {
+  res.set('Access-Control-Allow-Origin', '*');
+
+  const { rows } = await db.query(
+    `SELECT c.title, c.raised_amount, c.target_amount, c.asset_type, c.status,
+            (SELECT COUNT(*)::int FROM contributions WHERE campaign_id = c.id) AS contributor_count
+     FROM campaigns c
+     WHERE c.id = $1
+       AND c.deleted_at IS NULL`,
+    [req.params.id]
+  );
+
+  if (!rows.length) return res.status(404).json({ error: 'Not found' });
+  res.json(rows[0]);
+}));
+
 // Get single Campaign
 router.get('/:id', asyncHandler(async (req, res) => {
   /**
