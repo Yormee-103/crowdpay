@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { api } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { markJustRegistered } from '../lib/onboarding';
@@ -19,6 +20,7 @@ function passwordStrength(pw) {
 }
 
 export default function Register() {
+  const { t } = useTranslation();
   const { login } = useAuth();
   const navigate = useNavigate();
   const [form, setForm] = useState({ name: '', email: '', password: '', confirmPassword: '', role: 'contributor' });
@@ -30,24 +32,26 @@ export default function Register() {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
-  function set(field) { return (e) => setForm((f) => ({ ...f, [field]: e.target.value })); }
+  function set(field) {
+    return (e) => setForm((f) => ({ ...f, [field]: e.target.value }));
+  }
 
   async function handleSubmit(e) {
     e.preventDefault();
     if (!form.name.trim() || !form.email.trim() || !form.password.trim()) {
-      setError('Name, email, and password are required.');
+      setError(t('register.required'));
       return;
     }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) {
-      setError('Enter a valid email address.');
+      setError(t('register.invalidEmail'));
       return;
     }
     if (form.password.length < 8) {
-      setError('Password must be at least 8 characters.');
+      setError(t('register.passwordLength'));
       return;
     }
     if (form.password !== form.confirmPassword) {
-      setError('Passwords do not match.');
+      setError(t('register.passwordsMismatch'));
       return;
     }
     setLoading(true);
@@ -93,7 +97,7 @@ export default function Register() {
       if (!pk) throw new Error('Freighter did not return a public key');
       setFreighterPublicKey(pk);
       setUsingFreighter(true);
-      setForm((f) => ({ ...f, password: f.password })); // keep same object
+      setForm((f) => ({ ...f, password: f.password }));
     } catch (err) {
       setError(err.message || 'Could not connect to Freighter');
     }
@@ -101,18 +105,18 @@ export default function Register() {
 
   return (
     <main className="container" style={{ paddingTop: '4rem', maxWidth: '400px' }}>
-      <h1 style={{ fontSize: '1.6rem', fontWeight: 800, marginBottom: '0.5rem' }}>Create account</h1>
+      <h1 style={{ fontSize: '1.6rem', fontWeight: 800, marginBottom: '0.5rem' }}>{t('register.title')}</h1>
       <p style={{ color: 'var(--color-text-hint)', marginBottom: '1.5rem', fontSize: '0.9rem' }}>
-        A Stellar wallet is created for you automatically.
+        {t('register.subtitle')}
       </p>
       <form noValidate onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
-        <input placeholder="Full name" value={form.name} onChange={set('name')} required />
-        <input type="email" placeholder="Email" value={form.email} onChange={set('email')} required />
+        <input placeholder={t('register.fullName')} value={form.name} onChange={set('name')} required />
+        <input type="email" placeholder={t('register.email')} value={form.email} onChange={set('email')} required />
         <div style={{ position: 'relative' }}>
           <input
             id="reg-password"
             type={showPassword ? 'text' : 'password'}
-            placeholder="Password"
+            placeholder={t('register.password')}
             value={form.password}
             onChange={set('password')}
             required
@@ -122,7 +126,7 @@ export default function Register() {
           />
           <button
             type="button"
-            aria-label={showPassword ? 'Hide password' : 'Show password'}
+            aria-label={showPassword ? t('login.hidePassword') : t('login.showPassword')}
             onClick={() => setShowPassword((v) => !v)}
             style={{
               position: 'absolute',
@@ -138,7 +142,7 @@ export default function Register() {
               fontSize: '0.85rem',
             }}
           >
-            {showPassword ? 'Hide' : 'Show'}
+            {showPassword ? t('common.hide') : t('common.show')}
           </button>
         </div>
         {form.password && (() => {
@@ -153,7 +157,7 @@ export default function Register() {
           );
         })()}
         <div className="form-stack" style={{ position: 'relative' }}>
-          <label className="label-strong" htmlFor="reg-confirm">Confirm password</label>
+          <label className="label-strong" htmlFor="reg-confirm">{t('register.confirmPassword')}</label>
           <input
             id="reg-confirm"
             type={showConfirmPassword ? 'text' : 'password'}
@@ -165,7 +169,7 @@ export default function Register() {
           />
           <button
             type="button"
-            aria-label={showConfirmPassword ? 'Hide password' : 'Show password'}
+            aria-label={showConfirmPassword ? t('login.hidePassword') : t('login.showPassword')}
             onClick={() => setShowConfirmPassword((v) => !v)}
             style={{
               position: 'absolute',
@@ -181,33 +185,36 @@ export default function Register() {
               fontSize: '0.85rem',
             }}
           >
-            {showConfirmPassword ? 'Hide' : 'Show'}
+            {showConfirmPassword ? t('common.hide') : t('common.show')}
           </button>
         </div>
-        <select value={form.role} onChange={set('role')} aria-label="Account role">
-          <option value="contributor">Contributor</option>
-          <option value="creator">Creator</option>
+        <select value={form.role} onChange={set('role')} aria-label={t('register.roleLabel')}>
+          <option value="contributor">{t('register.contributor')}</option>
+          <option value="creator">{t('register.creator')}</option>
         </select>
         {freighterAvailable && (
           <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
             <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
               <input type="checkbox" checked={usingFreighter} onChange={(e) => setUsingFreighter(e.target.checked)} />
-              Use Freighter (self-custody)
+              {t('register.useFreighter')}
             </label>
             {usingFreighter ? (
               <button type="button" className="btn-secondary" onClick={connectFreighter}>
-                {freighterPublicKey ? 'Connected' : 'Connect Freighter'}
+                {freighterPublicKey ? t('register.connected') : t('register.connectFreighter')}
               </button>
             ) : null}
           </div>
         )}
         {error && <p style={{ color: 'var(--color-status-error)', fontSize: '0.875rem' }}>{error}</p>}
         <button type="submit" className="btn-primary" disabled={loading} style={{ padding: '0.8rem' }}>
-          {loading ? 'Creating account…' : 'Sign up'}
+          {loading ? t('register.loading') : t('common.signUp')}
         </button>
       </form>
       <p style={{ marginTop: '1.25rem', color: 'var(--color-text-hint)', fontSize: '0.9rem' }}>
-        Have an account? <Link to="/login" style={{ color: 'var(--color-accent)', fontWeight: 600 }}>Log in</Link>
+        {t('register.haveAccount')}{' '}
+        <Link to="/login" style={{ color: 'var(--color-accent)', fontWeight: 600 }}>
+          {t('register.logIn')}
+        </Link>
       </p>
     </main>
   );

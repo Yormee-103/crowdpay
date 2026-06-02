@@ -1,42 +1,64 @@
 import React from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { useAuth } from '../context/AuthContext';
-import { useTheme } from '../context/ThemeContext';
-import { api } from '../services/api';
 
 export default function Navbar() {
   const { user, logout } = useAuth();
-  const { dark, toggleTheme } = useTheme();
-  const navigate = useNavigate();
   const { pathname } = useLocation();
+  const navigate = useNavigate();
+  const { t, i18n } = useTranslation();
+  const language = (i18n.resolvedLanguage || i18n.language || 'en').split('-')[0];
 
   function handleLogout() {
     logout();
     navigate('/');
   }
 
-  function closeMenu() {
-    setMenuOpen(false);
-  }
-
   return (
     <nav style={styles.nav}>
       <div className="container nav-inner-wrap">
-        <Link to="/" style={styles.logo} aria-label="CrowdPay home" aria-current={pathname === '/' ? 'page' : undefined}>CrowdPay</Link>
+        <Link
+          to="/"
+          style={styles.logo}
+          aria-label={t('nav.homeAria')}
+          aria-current={pathname === '/' ? 'page' : undefined}
+        >
+          CrowdPay
+        </Link>
         <div className="nav-links">
+          <select
+            value={language}
+            onChange={(e) => i18n.changeLanguage(e.target.value)}
+            aria-label={t('nav.selectLanguage')}
+            style={styles.languageSelect}
+          >
+            <option value="en">EN</option>
+            <option value="fr">FR</option>
+          </select>
           {user ? (
             <>
-              <Link to="/campaigns/new" style={styles.link} aria-current={pathname === '/campaigns/new' ? 'page' : undefined}>Start Campaign</Link>
+              <Link
+                to="/campaigns/new"
+                style={styles.link}
+                aria-current={pathname === '/campaigns/new' ? 'page' : undefined}
+              >
+                {t('nav.startCampaign')}
+              </Link>
               <span style={styles.name} aria-hidden="true">{user.name}</span>
               <button onClick={handleLogout} className="btn-secondary" style={{ padding: '0.4rem 0.9rem' }}>
-                Logout
+                {t('nav.logout')}
               </button>
             </>
           ) : (
             <>
-              <Link to="/login" style={styles.link} aria-current={pathname === '/login' ? 'page' : undefined}>Log in</Link>
+              <Link to="/login" style={styles.link} aria-current={pathname === '/login' ? 'page' : undefined}>
+                {t('nav.login')}
+              </Link>
               <Link to="/register" aria-current={pathname === '/register' ? 'page' : undefined}>
-                <button className="btn-primary" style={{ padding: '0.4rem 0.9rem' }}>Sign up</button>
+                <button className="btn-primary" style={{ padding: '0.4rem 0.9rem' }}>
+                  {t('nav.signup')}
+                </button>
               </Link>
             </>
           )}
@@ -51,7 +73,12 @@ const styles = {
   logo: { fontWeight: 800, fontSize: '1.15rem', color: 'var(--color-accent)' },
   link: { color: 'var(--color-text-secondary)', fontWeight: 500, fontSize: '0.9rem' },
   name: { color: 'var(--color-text-secondary)', fontSize: '0.85rem', maxWidth: '140px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-  balance: { color: 'var(--color-text-hint)', fontSize: '0.8rem', fontFamily: 'monospace' },
-  balanceLoading: { color: 'var(--color-text-muted)', fontSize: '0.8rem' },
-  themeToggle: { background: 'transparent', border: 'none', fontSize: '1.2rem', cursor: 'pointer', padding: '0.4rem 0.6rem', borderRadius: '6px', transition: 'background 0.15s' },
+  languageSelect: {
+    background: 'transparent',
+    border: '1px solid var(--color-border)',
+    borderRadius: '8px',
+    padding: '0.35rem 0.55rem',
+    color: 'var(--color-text-secondary)',
+    fontSize: '0.85rem',
+  },
 };
