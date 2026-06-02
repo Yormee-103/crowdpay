@@ -195,6 +195,78 @@ async function logWithdrawalEvent(
 }
 
 // List campaigns with optional search, filtering, sorting, and pagination
+router.get('/', getCampaignsValidation, validateRequest, asyncHandler(async (req, res) => {
+  /**
+   * @openapi
+   * /api/campaigns:
+   *   get:
+   *     tags: [Campaigns]
+   *     summary: List campaigns
+   *     parameters:
+   *       - in: query
+   *         name: status
+   *         schema: { type: string }
+   *       - in: query
+   *         name: asset
+   *         schema: { type: string }
+   *       - in: query
+   *         name: search
+   *         schema: { type: string }
+   *       - in: query
+   *         name: sort
+   *         schema: { type: string }
+   *       - in: query
+   *         name: limit
+   *         schema: { type: integer, minimum: 1, maximum: 50 }
+   *       - in: query
+   *         name: offset
+   *         schema: { type: integer, minimum: 0 }
+   *     responses:
+   *       200:
+   *         description: OK
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 total: { type: integer }
+   *                 limit: { type: integer }
+   *                 offset: { type: integer }
+   *                 campaigns:
+   *                   type: array
+   *                   items:
+   *                     type: object
+   */
+  const { search, status, asset, category, sort = 'newest' } = req.query;
+  const limit = Math.min(Number(req.query.limit || 20), 100);
+  const offset = Math.max(Number(req.query.offset || 0), 0);
+  const filters = [];
+  const params = [];
+
+  // Exclude deleted campaigns from public listing
+  filters.push(`c.deleted_at IS NULL`);
+
+  if (status) {
+    params.push(status);
+    filters.push(`c.status = $${params.length}`);
+  } else {
+    filters.push(`c.status = 'active'`);
+  }
+  if (asset) {
+    params.push(asset);
+    filters.push(`c.asset_type = $${params.length}`);
+  }
+  if (search) {
+    const escaped = String(search).replace(/[%_\\]/g, '\\$&');
+    params.push(`%${escaped}%`);
+    filters.push(
+      `(c.title ILIKE $${params.length} OR COALESCE(c.description, '') ILIKE $${params.length})`
+    );
+  }
+  if (category) {
+    params.push(category);
+    filters.push(`c.category = $${params.length}`);
+  }
 router.get(
   "/",
   getCampaignsValidation,
@@ -313,6 +385,21 @@ router.get(
   }),
 );
 
+// Category counts for active campaigns
+router.get('/categories', asyncHandler(async (req, res) => {
+  const { rows } = await db.query(
+    `SELECT category, COUNT(*)::int AS count
+     FROM campaigns
+     WHERE status = 'active' AND category IS NOT NULL AND deleted_at IS NULL
+     GROUP BY category
+     ORDER BY count DESC`
+  );
+  res.json(rows);
+}));
+
+router.get('/:id/milestones', asyncHandler(async (req, res) => {
+  const { rows } = await db.query(
+    `SELECT m.*, (c.milestones_contract_id IS NOT NULL) AS on_chain
 router.get(
   "/:id/milestones",
   asyncHandler(async (req, res) => {

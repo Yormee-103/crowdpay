@@ -26,6 +26,18 @@ function daysSince(date) {
   );
 }
 
+const CATEGORY_LABELS = {
+  technology: 'Technology',
+  community: 'Community',
+  arts: 'Arts & Culture',
+  education: 'Education',
+  environment: 'Environment',
+  health: 'Health',
+  business: 'Business',
+  open_source: 'Open Source',
+  other: 'Other',
+};
+
 export default function CampaignCard({ campaign }) {
   const pct = Math.min(
     100,
@@ -73,6 +85,11 @@ export default function CampaignCard({ campaign }) {
           >
             <span style={styles.asset}>{campaign.asset_type}</span>
             <CampaignStatusBadge status={campaign.status} />
+            {campaign.category && (
+              <span style={styles.categoryBadge}>
+                {CATEGORY_LABELS[campaign.category] || campaign.category}
+              </span>
+            )}
           </div>
           <VerificationBadge status={campaign.creator_kyc_status} compact />
         </div>
