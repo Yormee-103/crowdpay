@@ -17,6 +17,8 @@ const {
   emitWebhookEventForCampaign,
   WEBHOOK_EVENTS,
 } = require("./webhookDispatcher");
+const { createNotification } = require("./notifications");
+const Sentry = require("@sentry/node");
 
 /** wallet_public_key -> stream metadata */
 const streamRegistry = new Map();
@@ -349,6 +351,12 @@ async function handlePayment(campaignId, walletPublicKey, payment) {
     } catch {
       // ignore rollback errors after failed work
     }
+    Sentry.withScope((scope) => {
+      scope.setTag("stellar.network", process.env.STELLAR_NETWORK);
+      scope.setExtra("tx_hash", txHash);
+      scope.setExtra("campaign_id", campaignId);
+      Sentry.captureException(err);
+    });
     logger.error("Failed to index contribution", {
       campaign_id: campaignId,
       tx_hash: txHash,
@@ -401,6 +409,13 @@ async function handlePayment(campaignId, walletPublicKey, payment) {
         ).catch((e) =>
           logger.error("Funded webhook emit failed", { error: e.message }),
         );
+
+        createNotification(postCommitHooks.fundedCampaign.creator_id, {
+          type: 'goal_reached',
+          title: 'Goal reached!',
+          body: `Your campaign "${postCommitHooks.fundedCampaign.title}" has reached its funding goal.`,
+          link: `/campaigns/${postCommitHooks.campaignId}`,
+        }).catch(() => {});
       }
     });
   }
