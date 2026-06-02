@@ -382,6 +382,50 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
   50% { opacity: 0.5; transform: scale(0.85); }
 }
 
+@media print {
+  /* Hide interactive chrome */
+  nav,
+  .btn-primary,
+  .btn-secondary,
+  .modal-overlay,
+  [data-no-print] {
+    display: none !important;
+  }
+
+  /* Clean up layout */
+  body { font-size: 12pt; color: #000; background: #fff; }
+  .container { max-width: 100%; padding: 0; }
+
+  /* Make links show their URL */
+  a[href]::after {
+    content: " (" attr(href) ")";
+    font-size: 10pt;
+    color: #555;
+  }
+
+  /* Progress bar should be visible */
+  .campaign-progress-bar, .campaign-progress-bar > div {
+    border: 1px solid #000;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+
+  /* Page break hints */
+  .contributions-list { page-break-inside: avoid; }
+
+  /* Ensure QR code shows */
+  .qr-wrapper { display: flex !important; }
+
+  /* Footer */
+  body::after {
+    content: "Printed from CrowdPay — " attr(data-print-url) " on " attr(data-print-date);
+    display: block;
+    margin-top: 2rem;
+    font-size: 9pt;
+    color: #888;
+    border-top: 1px solid #ccc;
+    padding-top: 0.5rem;
+  }
 /* Sort pills */
 .pill {
   background: var(--color-bg);

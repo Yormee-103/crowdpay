@@ -45,7 +45,7 @@ export default function Navbar() {
   }
 
   return (
-    <nav style={styles.nav}>
+    <nav style={styles.nav} data-no-print>
       <div className="container nav-inner-wrap">
         <Link
           to="/"

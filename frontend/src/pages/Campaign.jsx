@@ -186,6 +186,15 @@ export default function Campaign() {
   const [hasPendingWithdrawal, setHasPendingWithdrawal] = useState(false);
 
   useEffect(() => {
+    document.body.dataset.printUrl = window.location.href;
+    document.body.dataset.printDate = new Date().toLocaleDateString();
+    return () => {
+      delete document.body.dataset.printUrl;
+      delete document.body.dataset.printDate;
+    };
+  }, []);
+
+  useEffect(() => {
     setLoadError("");
     api
       .getCampaign(id, token)
@@ -894,6 +903,7 @@ export default function Campaign() {
         </div>
         <div
           role="progressbar"
+          className="campaign-progress-bar"
           aria-valuenow={Number(pct)}
           aria-valuemin={0}
           aria-valuemax={100}
@@ -1034,6 +1044,7 @@ export default function Campaign() {
       </div>
 
       <div
+        data-no-print
         style={{
           display: "flex",
           gap: "0.65rem",
@@ -1142,11 +1153,18 @@ export default function Campaign() {
       </div>
 
       {/* Edit campaign button - visible only to creator */}
-      {user &&
-        campaign &&
-        user.userId === campaign.creator_id &&
-        ["active", "funded"].includes(campaign.status) && (
-          <div
+      {user && campaign && user.userId === campaign.creator_id && ['active', 'funded'].includes(campaign.status) && (
+        <div
+          data-no-print
+          style={{
+            display: "flex",
+            gap: "0.65rem",
+            marginBottom: "1.75rem",
+          }}
+        >
+          <button
+            type="button"
+            className="btn-secondary"
             style={{
               display: "flex",
               gap: "0.65rem",
@@ -1193,14 +1211,13 @@ export default function Campaign() {
         <code style={styles.walletKey}>{campaign.wallet_public_key}</code>
       </div>
 
-      <div style={{ marginBottom: "1.75rem" }}>
-        <button
-          type="button"
-          className="btn-secondary"
-          onClick={() => setShowQR((v) => !v)}
-        >
-          {showQR ? "Hide QR code" : "Show QR code"}
+      <div style={{ marginBottom: '1.75rem' }}>
+        <button type="button" className="btn-secondary" data-no-print onClick={() => setShowQR((v) => !v)}>
+          {showQR ? 'Hide QR code' : 'Show QR code'}
         </button>
+        <div className="qr-wrapper" style={{ marginTop: '1rem', display: showQR ? 'flex' : 'none', justifyContent: 'center' }}>
+          <CampaignQRCode url={`${window.location.origin}/campaigns/${id}`} size={200} />
+        </div>
         {showQR && (
           <div style={{ marginTop: '1rem', display: 'flex', justifyContent: 'center' }}>
             <CampaignQRCode url={campaignUrl} size={200} />
@@ -1234,7 +1251,7 @@ export default function Campaign() {
       {user &&
         contributions?.some((c) => c.sender_public_key) &&
         campaign.creator_id !== user.id && (
-          <div style={{ marginBottom: "1.25rem" }}>
+          <div style={{ marginBottom: "1.25rem" }} data-no-print>
             {disputeSubmitted ? (
               <p className="alert alert--success" role="status">
                 Your dispute has been submitted. The platform team will review
@@ -1260,24 +1277,141 @@ export default function Campaign() {
             )}
           </div>
         )}
-      {token && (
-        <div id="withdrawals">
-          <WithdrawalsSection
-            campaign={campaign}
-            milestones={milestones}
-            user={user}
-            token={token}
-            onReleased={() => {
-              api
-                .getCampaign(id)
-                .then(setCampaign)
-                .catch(() => {});
-              api
-                .getMilestones(id)
-                .then(setMilestones)
-                .catch(() => {});
+      {canPostUpdate && (
+        <div style={styles.card} data-no-print>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              marginBottom: "1rem",
             }}
-          />
+          >
+            <h3 style={{ margin: 0, fontSize: "1rem", fontWeight: 700 }}>
+              Embed this campaign
+            </h3>
+            <button
+              type="button"
+              onClick={() => setShowEmbedSection(!showEmbedSection)}
+              style={{
+                background: "transparent",
+                color: "var(--color-accent)",
+                border: "1px solid var(--color-accent)",
+                padding: "0.4rem 0.8rem",
+                fontSize: "0.85rem",
+                minHeight: "auto",
+              }}
+            >
+              {showEmbedSection ? "Hide" : "Show"}
+            </button>
+          </div>
+
+          {showEmbedSection && (
+            <>
+              <p
+                style={{
+                  fontSize: "0.85rem",
+                  color: "var(--color-text-hint)",
+                  marginBottom: "1rem",
+                  lineHeight: 1.5,
+                }}
+              >
+                Add this embed code to your website or blog to display a live
+                funding widget for this campaign.
+              </p>
+
+              <div style={{ marginBottom: "1rem" }}>
+                <label
+                  style={{
+                    fontSize: "0.8rem",
+                    fontWeight: 600,
+                    color: "var(--color-text-hint)",
+                    display: "block",
+                    marginBottom: "0.5rem",
+                  }}
+                >
+                  Embed code
+                </label>
+                <div style={{ position: "relative" }}>
+                  <pre style={styles.embedCode}>
+                    {`<iframe src="${window.location.origin}/embed/campaigns/${campaign.id}" \n        width="480" height="280" frameborder="0">\n</iframe>`}
+                  </pre>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const code = `<iframe src="${window.location.origin}/embed/campaigns/${campaign.id}" width="480" height="280" frameborder="0"></iframe>`;
+                      navigator.clipboard.writeText(code).then(() => {
+                        setEmbedCopied(true);
+                        setTimeout(() => setEmbedCopied(false), 2000);
+                      });
+                    }}
+                    style={{
+                      position: "absolute",
+                      top: "0.5rem",
+                      right: "0.5rem",
+                      background: embedCopied
+                        ? "var(--color-success-text)"
+                        : "var(--color-accent)",
+                      color: "#fff",
+                      padding: "0.4rem 0.8rem",
+                      fontSize: "0.8rem",
+                      minHeight: "auto",
+                    }}
+                  >
+                    {embedCopied ? "Copied!" : "Copy"}
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label
+                  style={{
+                    fontSize: "0.8rem",
+                    fontWeight: 600,
+                    color: "var(--color-text-hint)",
+                    display: "block",
+                    marginBottom: "0.5rem",
+                  }}
+                >
+                  Preview
+                </label>
+                <div style={styles.embedPreview}>
+                  <iframe
+                    src={`/embed/campaigns/${campaign.id}`}
+                    width="100%"
+                    height="280"
+                    frameBorder="0"
+                    title="Campaign embed preview"
+                    style={{
+                      border: "1px solid var(--color-border-light)",
+                      borderRadius: "6px",
+                    }}
+                  />
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {token && (
+        <div id="withdrawals" data-no-print>
+        <WithdrawalsSection
+          campaign={campaign}
+          milestones={milestones}
+          user={user}
+          token={token}
+          onReleased={() => {
+            api
+              .getCampaign(id)
+              .then(setCampaign)
+              .catch(() => {});
+            api
+              .getMilestones(id)
+              .then(setMilestones)
+              .catch(() => {});
+          }}
+        />
         </div>
       )}
 
@@ -1291,7 +1425,7 @@ export default function Campaign() {
         assetType={campaign.asset_type}
       />
       {isOwner && (
-        <div style={{ marginBottom: "2rem" }}>
+        <div style={{ marginBottom: "2rem" }} data-no-print>
           <h2 style={styles.sectionTitle}>Team Management</h2>
           <div className="campaign-card" style={{ marginBottom: "1.5rem" }}>
             <strong style={{ marginBottom: "0.75rem", display: "block" }}>
@@ -1469,16 +1603,13 @@ export default function Campaign() {
         </div>
       )}
 
-      <div style={styles.tabs} role="tablist" aria-label="Campaign activity">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={activeTab === "contributions"}
-          className={
-            activeTab === "contributions" ? "btn-primary" : "btn-secondary"
-          }
-          onClick={() => setActiveTab("contributions")}
-          style={styles.tabButton}
+      <h2 style={styles.sectionTitle}>Updates ({updates.length})</h2>
+      {canPostUpdate && (
+        <form
+          onSubmit={submitUpdate}
+          className="campaign-card"
+          style={{ marginBottom: "1rem" }}
+          data-no-print
         >
           Contributions{" "}
           {contributions !== null ? `(${totalContributions})` : ""}
@@ -1844,7 +1975,7 @@ export default function Campaign() {
         </div>
       ) : (
         <>
-          <div style={styles.list}>
+          <div style={styles.list} className="contributions-list">
             {contributions.map((c) => (
               <ContributionRow key={c.id} c={c} />
             ))}

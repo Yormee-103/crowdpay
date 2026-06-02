@@ -230,7 +230,7 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
   if (!canView) return null;
 
   return (
-    <section style={styles.section} aria-label="Fund release">
+    <section style={styles.section} aria-label="Fund release" data-no-print>
       <h2 style={styles.h2}>Manual fund release</h2>
       <p style={styles.intro}>
         Funds leave the campaign wallet only after <strong>you</strong> (creator) and{' '}
