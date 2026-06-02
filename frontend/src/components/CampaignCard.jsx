@@ -1,7 +1,8 @@
-import React from "react";
-import { Link } from "react-router-dom";
-import VerificationBadge from "./VerificationBadge";
-import CampaignStatusBadge from "./CampaignStatusBadge";
+import React from 'react';
+import { Link } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
+import VerificationBadge from './VerificationBadge';
+import CampaignStatusBadge from './CampaignStatusBadge';
 
 function progressColor(pct, status) {
   if (status === 'funded' || pct >= 100) return '#10b981'; // green — goal reached
@@ -12,12 +13,10 @@ function progressColor(pct, status) {
 
 function daysLeft(deadline) {
   if (!deadline) return null;
-  const diff = Math.ceil(
-    (new Date(deadline) - Date.now()) / (1000 * 60 * 60 * 24),
-  );
-  if (diff < 0) return "Ended";
-  if (diff === 0) return "Last day";
-  return `${diff}d left`;
+  const diff = Math.ceil((new Date(deadline) - Date.now()) / (1000 * 60 * 60 * 24));
+  if (diff < 0) return { kind: 'ended' };
+  if (diff === 0) return { kind: 'lastDay' };
+  return { kind: 'count', value: diff };
 }
 function daysSince(date) {
   if (!date) return null;
@@ -39,20 +38,11 @@ const CATEGORY_LABELS = {
 };
 
 export default function CampaignCard({ campaign }) {
-  const pct = Math.min(
-    100,
-    (campaign.raised_amount / campaign.target_amount) * 100,
-  ).toFixed(1);
+  const { t } = useTranslation();
+  const pct = Math.min(100, (campaign.raised_amount / campaign.target_amount) * 100).toFixed(1);
   const fillColor = progressColor(parseFloat(pct), campaign.status);
   const deadline = daysLeft(campaign.deadline);
-  const hasRecentUpdate =
-    campaign.latest_update_at && daysSince(campaign.latest_update_at) <= 7;
-  const deadlineColor =
-    deadline === "Ended"
-      ? "#ef4444"
-      : deadline === "Last day"
-        ? "#f59e0b"
-        : "#f59e0b";
+  const deadlineColor = deadline?.kind === 'ended' ? '#ef4444' : '#f59e0b';
 
   return (
     <Link
@@ -71,7 +61,7 @@ export default function CampaignCard({ campaign }) {
           </div>
         ) : (
           <div style={styles.coverPlaceholder} aria-hidden="true">
-            <span style={styles.coverPlaceholderText}>No campaign image</span>
+            <span style={styles.coverPlaceholderText}>{t('campaignCard.noImage')}</span>
           </div>
         )}
         <div style={styles.header}>
@@ -96,34 +86,15 @@ export default function CampaignCard({ campaign }) {
           </div>
           <VerificationBadge status={campaign.creator_kyc_status} compact />
         </div>
-        <div
-          style={{
-            display: "flex",
-            gap: "0.5rem",
-            alignItems: "center",
-            flexWrap: "wrap",
-            marginBottom: "0.45rem",
-          }}
-        >
-          {typeof campaign.update_count === "number" &&
-            campaign.update_count > 0 && (
-              <span style={styles.updates}>
-                {campaign.update_count} updates
-              </span>
-            )}
-          {hasRecentUpdate && (
-            <span style={styles.updateBadge}>New update</span>
-          )}
-        </div>
-        <h3 style={styles.title}>{campaign.title}</h3>
-        {campaign.creator_name && (
-          <p style={styles.creator}>by {campaign.creator_name}</p>
+        {typeof campaign.updates_count === 'number' && (
+          <div style={styles.updates}>{t('campaignCard.updates', { count: campaign.updates_count })}</div>
         )}
+        <h3 style={styles.title}>{campaign.title}</h3>
+        {campaign.creator_name && <p style={styles.creator}>{t('campaignCard.by', { name: campaign.creator_name })}</p>}
         <p style={styles.desc}>
           {campaign.description?.slice(0, 100)}
-          {campaign.description?.length > 100 ? "…" : ""}
+          {campaign.description?.length > 100 ? '...' : ''}
         </p>
-
         <div
           role="progressbar"
           aria-valuenow={Number(pct)}
@@ -132,36 +103,33 @@ export default function CampaignCard({ campaign }) {
           aria-label={`${pct}% of goal funded`}
           style={styles.bar}
         >
-          <div
-            style={{ ...styles.fill, background: fillColor, width: `${pct}%` }}
-            aria-hidden="true"
-          />
+          <div style={{ ...styles.fill, width: `${pct}%`, background: fillColor }} aria-hidden="true" />
         </div>
 
         {deadline && (
           <span
             style={{
               ...styles.deadline,
-              background: deadlineColor === "#ef4444" ? "#fee2e2" : "#fef3c7",
+              background: deadlineColor === '#ef4444' ? '#fee2e2' : '#fef3c7',
               color: deadlineColor,
               borderColor: deadlineColor,
             }}
           >
-            {deadline}
+            {deadline.kind === 'ended'
+              ? t('campaignCard.ended')
+              : deadline.kind === 'lastDay'
+                ? t('campaignCard.lastDay')
+                : t('campaignCard.daysLeft', { count: deadline.value })}
           </span>
         )}
         <div style={styles.meta}>
           <span>
-            <strong>{Number(campaign.raised_amount).toLocaleString()}</strong>{" "}
-            {campaign.asset_type} raised
+            <strong>{Number(campaign.raised_amount).toLocaleString()}</strong> {campaign.asset_type} {t('campaignCard.raised')}
           </span>
-          <span>
-            {pct}% by <strong>{campaign.contributor_count || 0}</strong> backers
-          </span>
+          <span>{t('campaignCard.backers', { pct, count: campaign.contributor_count || 0 })}</span>
         </div>
         <div style={styles.target}>
-          Goal: {Number(campaign.target_amount).toLocaleString()}{" "}
-          {campaign.asset_type}
+          {t('campaignCard.goal', { amount: Number(campaign.target_amount).toLocaleString(), asset: campaign.asset_type })}
         </div>
       </div>
     </Link>

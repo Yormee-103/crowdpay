@@ -3,6 +3,8 @@ import ReactDOM from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import * as Sentry from '@sentry/react';
 import App from './App';
+import ErrorBoundary from './components/ErrorBoundary';
+import './i18n';
 import './index.css';
 
 Sentry.init({

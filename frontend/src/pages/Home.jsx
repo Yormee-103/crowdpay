@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { api } from '../services/api';
 import CampaignCard from '../components/CampaignCard';
 import CampaignCardSkeleton from '../components/skeletons/CampaignCardSkeleton';
@@ -14,6 +15,9 @@ import {
 const STATUS_OPTIONS = ['', 'active', 'funded', 'closed', 'failed'];
 const ASSET_OPTIONS = ['', 'USDC', 'XLM'];
 const SORT_OPTIONS = [
+  { value: 'newest', key: 'home.newest' },
+  { value: 'most_funded', key: 'home.mostFunded' },
+  { value: 'closest_to_goal', key: 'home.closestToGoal' },
   { value: 'newest', label: 'Newest' },
   { value: 'trending', label: 'Trending' },
   { value: 'funded', label: 'Most funded' },
@@ -33,6 +37,7 @@ const CATEGORY_LABELS = {
 const SEARCH_DEBOUNCE_MS = 450;
 
 export default function Home() {
+  const { t } = useTranslation();
   const [page, setPage] = useState(0);
   const [campaigns, setCampaigns] = useState([]);
   const [total, setTotal] = useState(0);
@@ -101,7 +106,7 @@ export default function Home() {
         setHasMore(nextCampaigns.length < nextTotal);
         setPage(1);
       })
-      .catch((err) => setListError(err.message || 'Could not load campaigns.'))
+      .catch((err) => setListError(err.message || t('home.loadingCampaigns')))
       .finally(() => setLoading(false));
   }, [search, status, asset, category, sort]);
 
@@ -127,7 +132,7 @@ export default function Home() {
       setTotal(nextTotal);
       setPage((p) => p + 1);
     } catch (err) {
-      setListError(err.message || 'Could not load more campaigns.');
+      setListError(err.message || t('home.loadingCampaigns'));
     } finally {
       setLoadingMore(false);
     }
@@ -155,8 +160,7 @@ export default function Home() {
     <main className="container" style={{ paddingTop: '1.5rem', paddingBottom: '4rem' }}>
       {welcomeNewUser && (
         <div className="alert alert--success" style={{ marginBottom: '1rem' }} role="status">
-          <strong>Welcome to CrowdPay.</strong> Your account includes a custodial Stellar wallet. Follow the instructions sent to your email to get started. Explore active
-          campaigns and fund one in seconds.
+          <strong>{t('home.welcomeTitle')}</strong> {t('home.welcomeBody')}
           <button
             type="button"
             onClick={() => setWelcomeNewUser(false)}
@@ -170,48 +174,45 @@ export default function Home() {
               minHeight: 'auto',
             }}
           >
-            Dismiss
+            {t('common.dismiss')}
           </button>
         </div>
       )}
 
       {user && showContributorTips && (
-        <OnboardingCallout title="How contributing works" onDismiss={dismissContributorTips}>
+        <OnboardingCallout title={t('home.onboardingTitle')} onDismiss={dismissContributorTips}>
           <ul>
-            <li>Each campaign settles in either USDC or XLM — that is what moves the progress bar.</li>
-            <li>You can pay with XLM or USDC; if they differ, Stellar converts automatically when a path exists.</li>
-            <li>Watch for live quotes in the contribute window before you confirm.</li>
+            <li>{t('home.onboardingItem1')}</li>
+            <li>{t('home.onboardingItem2')}</li>
+            <li>{t('home.onboardingItem3')}</li>
           </ul>
         </OnboardingCallout>
       )}
 
       <div style={styles.hero}>
-        <h1 style={styles.h1}>Fund anything, from anywhere.</h1>
-        <p style={styles.sub}>
-          CrowdPay runs on Stellar: fast settlement, optional cross-asset conversion, and a clear path from pledge to
-          on-chain receipt.
-        </p>
+        <h1 style={styles.h1}>{t('home.hero_title')}</h1>
+        <p style={styles.sub}>{t('home.hero_subtitle')}</p>
         {user ? (
           <div className="hero-actions">
             {(user.role === 'creator' || user.role === 'admin') && (
               <Link to="/campaigns/new" style={{ width: '100%' }}>
                 <button type="button" className="btn-primary" style={{ fontSize: '1rem', padding: '0.75rem 1.5rem', width: '100%' }}>
-                  Start a campaign
+                  {t('home.startCampaign')}
                 </button>
               </Link>
             )}
-            <span style={styles.muted}>or browse below and tap a card to contribute.</span>
+            <span style={styles.muted}>{t('home.browseHint')}</span>
           </div>
         ) : (
           <div className="hero-actions hero-actions--row-sm">
             <Link to="/register" style={{ flex: '1 1 140px', minWidth: '140px' }}>
               <button type="button" className="btn-primary" style={{ fontSize: '1rem', padding: '0.75rem 1.5rem', width: '100%' }}>
-                Create account
+                {t('home.createAccount')}
               </button>
             </Link>
             <Link to="/login" style={{ flex: '1 1 140px', minWidth: '140px' }}>
               <button type="button" className="btn-secondary" style={{ fontSize: '1rem', padding: '0.75rem 1.5rem', width: '100%' }}>
-                Log in
+                {t('login.title')}
               </button>
             </Link>
           </div>
@@ -220,17 +221,17 @@ export default function Home() {
 
       <div style={styles.filterBar}>
         <label style={styles.filterItem}>
-          Search
+          {t('home.searchLabel')}
           <input
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
-            placeholder="Search by title or description"
+            placeholder={t('home.searchPlaceholder')}
             style={styles.filterInput}
-            aria-label="Search campaigns"
+            aria-label={t('home.searchLabel')}
           />
         </label>
         <label style={styles.filterItem}>
-          Status
+          {t('home.statusLabel')}
           <select
             value={status}
             onChange={(e) => setFilters({ status: e.target.value })}
@@ -238,13 +239,13 @@ export default function Home() {
           >
             {STATUS_OPTIONS.map((option) => (
               <option key={option} value={option}>
-                {option === '' ? 'Any status' : option}
+                {option === '' ? t('home.anyStatus') : t(`home.status${option[0].toUpperCase()}${option.slice(1)}`)}
               </option>
             ))}
           </select>
         </label>
         <label style={styles.filterItem}>
-          Asset
+          {t('home.assetLabel')}
           <select
             value={asset}
             onChange={(e) => setFilters({ asset: e.target.value })}
@@ -252,13 +253,13 @@ export default function Home() {
           >
             {ASSET_OPTIONS.map((option) => (
               <option key={option} value={option}>
-                {option === '' ? 'Any asset' : option}
+                {option === '' ? t('home.anyAsset') : option}
               </option>
             ))}
           </select>
         </label>
         <label style={styles.filterItem}>
-          Sort by
+          {t('home.sortLabel')}
           <select
             value={sort}
             onChange={(e) => handleSortChange(e.target.value)}
@@ -266,13 +267,14 @@ export default function Home() {
           >
             {SORT_OPTIONS.map((option) => (
               <option key={option.value} value={option.value}>
-                {option.label}
+                {t(option.key)}
               </option>
             ))}
           </select>
         </label>
       </div>
 
+      <h2 style={styles.sectionTitle}>{t('home.activeCampaigns')}</h2>
       <div style={styles.categoryBar}>
         <button
           type="button"
@@ -324,7 +326,7 @@ export default function Home() {
         <div className="alert alert--info">
           {hasActiveFilters ? (
             <>
-              No campaigns match your search or filters.{' '}
+              {t('home.noMatches')}{' '}
               <button
                 type="button"
                 onClick={() => {
@@ -340,19 +342,19 @@ export default function Home() {
                   minHeight: 'auto',
                 }}
               >
-                Clear filters
+                {t('common.clearFilters')}
               </button>
             </>
           ) : user && (user.role === 'creator' || user.role === 'admin') ? (
             <>
-              No campaigns yet.{' '}
+              {t('home.noCampaigns')}{' '}
               <Link to="/campaigns/new" style={{ color: 'var(--color-info-text)', fontWeight: 700 }}>
-                Launch the first one
+                {t('home.startCampaign')}
               </Link>
               .
             </>
           ) : (
-            <>No public campaigns yet. Sign up to get notified when you create or back the first project.</>
+            <>{t('home.noPublicCampaigns')}</>
           )}
         </div>
       ) : (
@@ -364,7 +366,7 @@ export default function Home() {
           </div>
           <div style={styles.pagination}>
             <span style={styles.paginationInfo}>
-              Showing {campaigns.length} of {total} campaigns
+              {t('home.showingCampaigns', { count: campaigns.length, total })}
             </span>
             {hasMore && (
               <div style={styles.loadMoreContainer}>
@@ -375,7 +377,7 @@ export default function Home() {
                   disabled={loadingMore}
                   style={styles.loadMoreButton}
                 >
-                  {loadingMore ? 'Loading...' : 'Load more'}
+                  {loadingMore ? t('home.loadingMore') : t('home.loadMore')}
                 </button>
               </div>
             )}

@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import SimpleMDE from 'react-simplemde-editor';
 import 'easymde/dist/easymde.min.css';
@@ -44,6 +45,7 @@ function milestonePercentTotal(milestones) {
 }
 
 export default function CreateCampaign() {
+  const { t } = useTranslation();
   const { user, ready, updateUser } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -348,29 +350,28 @@ export default function CreateCampaign() {
           }}
         >
           <li aria-current={step === 1 ? 'step' : undefined}>
-            <span style={{ color: step === 1 ? '#7c3aed' : '#999' }}>1. Goal & asset</span>
+            <span style={{ color: step === 1 ? '#7c3aed' : '#999' }}>{t('createCampaign.steps.goalAsset')}</span>
           </li>
           <li aria-hidden="true">→</li>
           <li aria-current={step === 2 ? 'step' : undefined}>
-            <span style={{ color: step === 2 ? '#7c3aed' : '#999' }}>2. Details & launch</span>
+            <span style={{ color: step === 2 ? '#7c3aed' : '#999' }}>{t('createCampaign.steps.detailsLaunch')}</span>
           </li>
         </ol>
       </nav>
 
       <h1 style={{ fontSize: 'clamp(1.5rem, 4vw, 1.85rem)', fontWeight: 800, marginBottom: '0.35rem' }}>
-        Start a campaign
+        {t('createCampaign.title')}
       </h1>
       <p style={{ color: 'var(--color-text-secondary)', marginBottom: '1.25rem', fontSize: '0.95rem', lineHeight: 1.55 }}>
-        We create a dedicated Stellar wallet for your campaign. You choose the settlement asset and, if you want
-        staged releases, define the milestone plan that unlocks funds over time.
+        {t('createCampaign.subtitle')}
       </p>
 
       {showCreatorTips && (
-        <OnboardingCallout title="First time creating a campaign?" onDismiss={dismissTips}>
+        <OnboardingCallout title={t('createCampaign.tipsTitle')} onDismiss={dismissTips}>
           <ul>
-            <li>Pick the asset that matches how you think about your goal (USD-like vs XLM).</li>
-            <li>Milestones are optional, but they make releases auditable and give backers more confidence.</li>
-            <li>Withdrawals need both you and CrowdPay to sign — milestone campaigns use that flow automatically.</li>
+            <li>{t('createCampaign.tip1')}</li>
+            <li>{t('createCampaign.tip2')}</li>
+            <li>{t('createCampaign.tip3')}</li>
           </ul>
         </OnboardingCallout>
       )}
@@ -385,13 +386,13 @@ export default function CreateCampaign() {
           <>
             <div className="form-stack">
               <label className="label-strong" htmlFor="cc-title">
-                Campaign title
+                {t('createCampaign.campaignTitle')}
               </label>
               <input
                 id="cc-title"
                 value={form.title}
                 onChange={setField('title')}
-                placeholder="e.g. Community garden rebuild"
+                placeholder={t('createCampaign.campaignTitlePlaceholder')}
                 required
                 aria-required="true"
                 autoComplete="off"
@@ -400,7 +401,7 @@ export default function CreateCampaign() {
 
             <div className="form-stack" style={{ marginTop: '1rem' }}>
               <label className="label-strong" htmlFor="cc-target">
-                Fundraising goal
+                {t('createCampaign.fundraisingGoal')}
               </label>
               <input
                 id="cc-target"
@@ -416,14 +417,44 @@ export default function CreateCampaign() {
               />
             </div>
 
-            {/* Contribution limits moved to Step 2 Advanced limits */}
+            <div style={{ marginTop: '1.25rem', border: '1px dashed var(--color-border)', padding: '1rem', borderRadius: '8px' }}>
+              <h3 style={{ fontSize: '1rem', fontWeight: 700, marginBottom: '0.5rem' }}>{t('createCampaign.contributionLimits')}</h3>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                <div className="form-stack">
+                  <label className="label-strong" htmlFor="cc-min-contrib">{t('createCampaign.minContribution')}</label>
+                  <input
+                    id="cc-min-contrib"
+                    type="number"
+                    inputMode="decimal"
+                    min="0.0000001"
+                    step="any"
+                    value={form.min_contribution}
+                    onChange={setField('min_contribution')}
+                    placeholder="e.g. 5"
+                  />
+                </div>
+                <div className="form-stack">
+                  <label className="label-strong" htmlFor="cc-max-contrib">{t('createCampaign.maxContribution')}</label>
+                  <input
+                    id="cc-max-contrib"
+                    type="number"
+                    inputMode="decimal"
+                    min="0.0000001"
+                    step="any"
+                    value={form.max_contribution}
+                    onChange={setField('max_contribution')}
+                    placeholder="e.g. 500"
+                  />
+                </div>
+              </div>
+            </div>
 
             <fieldset style={{ border: 'none', margin: '1.25rem 0 0', padding: 0 }}>
               <legend className="label-strong" style={{ marginBottom: '0.5rem' }}>
-                Settlement asset
+                {t('createCampaign.settlementAsset')}
               </legend>
               <p style={{ fontSize: '0.8rem', color: 'var(--color-text-hint)', marginBottom: '0.65rem' }}>
-                Progress and payouts use this asset. Contributors may use a different asset if Stellar can convert it.
+                {t('createCampaign.settlementAssetHelp')}
               </p>
               <div className="asset-picker" role="radiogroup" aria-label="Settlement asset">
                 {ASSETS.map((a) => (
@@ -471,7 +502,7 @@ export default function CreateCampaign() {
                 if (validateStep1()) setStep(2);
               }}
             >
-              Continue to details
+              {t('createCampaign.continueToDetails')}
             </button>
           </>
         )}
@@ -515,19 +546,19 @@ export default function CreateCampaign() {
             </div>
             <div className="form-stack">
               <label className="label-strong" htmlFor="cc-desc">
-                Description <span style={{ fontWeight: 500, color: 'var(--color-text-muted)' }}>(optional)</span>
+                {t('createCampaign.description')} <span style={{ fontWeight: 500, color: 'var(--color-text-muted)' }}>{t('createCampaign.optional')}</span>
               </label>
-              <SimpleMDE
-                id="cc-desc"
-                value={form.description}
-                onChange={setDescription}
-                options={{ spellChecker: false, placeholder: 'Tell backers what the funds will be used for and what success looks like.' }}
+                <SimpleMDE
+                  id="cc-desc"
+                  value={form.description}
+                  onChange={setDescription}
+                options={{ spellChecker: false, placeholder: t('createCampaign.descriptionPlaceholder') }}
               />
             </div>
 
             <div className="form-stack" style={{ marginTop: '1rem' }}>
               <label className="label-strong" htmlFor="cc-cover">
-                Cover image <span style={{ fontWeight: 500, color: 'var(--color-text-muted)' }}>(optional)</span>
+                {t('createCampaign.coverImage')} <span style={{ fontWeight: 500, color: 'var(--color-text-muted)' }}>{t('createCampaign.optional')}</span>
               </label>
               <div
                 onDragOver={(e) => {
@@ -550,7 +581,7 @@ export default function CreateCampaign() {
                   onChange={handleCoverImageChange}
                 />
                 <p style={{ marginTop: '0.45rem', marginBottom: 0, color: '#666', fontSize: '0.8rem' }}>
-                  Drag and drop a JPEG, PNG, or WEBP image (max 5MB), or browse files.
+                  {t('createCampaign.coverImageHelp')}
                 </p>
               </div>
               {coverImagePreview && (
@@ -564,7 +595,7 @@ export default function CreateCampaign() {
 
             <div className="form-stack" style={{ marginTop: '1rem' }}>
               <label className="label-strong" htmlFor="cc-deadline">
-                Deadline <span style={{ fontWeight: 500, color: 'var(--color-text-muted)' }}>(optional)</span>
+                {t('createCampaign.deadline')} <span style={{ fontWeight: 500, color: 'var(--color-text-muted)' }}>{t('createCampaign.optional')}</span>
               </label>
               <input id="cc-deadline" type="date" min={today} value={form.deadline} onChange={setField('deadline')} />
             </div>
@@ -578,11 +609,11 @@ export default function CreateCampaign() {
                 onChange={(e) => setForm((f) => ({ ...f, show_backer_amounts: e.target.checked }))}
               />
               <label htmlFor="cc-show-backers" style={{ fontWeight: 600, fontSize: '0.9rem', cursor: 'pointer' }}>
-                Show contribution amounts on backer wall
+                {t('createCampaign.showAmounts')}
               </label>
             </div>
             <p style={{ fontSize: '0.8rem', color: 'var(--color-text-hint)', marginTop: '0.35rem' }}>
-              If unchecked, backers will be listed but their individual amounts will be hidden from the public.
+              {t('createCampaign.showAmountsHelp')}
             </p>
 
             <details style={{ marginTop: '1rem' }}>
@@ -620,7 +651,7 @@ export default function CreateCampaign() {
                   if (validateStep2()) setStep(3);
                 }}
               >
-                Continue to milestones
+                {t('createCampaign.continueToMilestones')}
               </button>
               <button
                 type="button"
@@ -631,7 +662,7 @@ export default function CreateCampaign() {
                   setStep(1);
                 }}
               >
-                Back
+                {t('createCampaign.back')}
               </button>
             </div>
           </>
@@ -641,33 +672,32 @@ export default function CreateCampaign() {
           <>
             <div className="campaign-card" style={{ marginBottom: '1rem' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
-                <strong>Milestone plan</strong>
+                <strong>{t('createCampaign.milestonePlan')}</strong>
                 <span style={{ fontSize: '0.85rem', color: milestoneTotal === 100 || form.milestones.length === 0 ? 'var(--color-success-text)' : 'var(--color-warning-text)' }}>
-                  Total: {milestoneTotal.toLocaleString()}%
+                {t('createCampaign.milestoneTotal', { count: milestoneTotal.toLocaleString() })}
                 </span>
               </div>
               <p style={{ color: 'var(--color-text-secondary)', fontSize: '0.88rem', lineHeight: 1.5 }}>
-                Milestones are optional. If you add them, define between 1 and 10 release checkpoints and make sure the
-                percentages sum to exactly 100.
+                {t('createCampaign.milestoneHelp')}
               </p>
             </div>
 
             {form.milestones.length === 0 ? (
               <div className="alert alert--info" style={{ marginBottom: '1rem' }}>
-                No milestones added yet. Legacy campaigns can still use the existing single-withdrawal flow.
+                {t('createCampaign.noMilestones')}
               </div>
             ) : (
               <div style={{ display: 'grid', gap: '0.85rem' }}>
                 {form.milestones.map((milestone, index) => (
                   <div key={index} className="campaign-card">
                     <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', alignItems: 'center', marginBottom: '0.5rem' }}>
-                      <strong>Milestone {index + 1}</strong>
+                      <strong>{t('createCampaign.milestone', { count: index + 1 })}</strong>
                       <button type="button" className="btn-secondary" onClick={() => removeMilestone(index)} style={{ fontSize: '0.8rem' }}>
                         Remove
                       </button>
                     </div>
                     <div className="form-stack">
-                      <label className="label-strong">Title</label>
+                      <label className="label-strong">{t('createCampaign.milestoneTitle')}</label>
                       <input
                         value={milestone.title}
                         onChange={(e) => setMilestoneField(index, 'title', e.target.value)}
@@ -675,7 +705,7 @@ export default function CreateCampaign() {
                       />
                     </div>
                     <div className="form-stack" style={{ marginTop: '0.75rem' }}>
-                      <label className="label-strong">Description</label>
+                      <label className="label-strong">{t('createCampaign.milestoneDescription')}</label>
                       <textarea
                         value={milestone.description}
                         onChange={(e) => setMilestoneField(index, 'description', e.target.value)}
@@ -684,7 +714,7 @@ export default function CreateCampaign() {
                       />
                     </div>
                     <div className="form-stack" style={{ marginTop: '0.75rem' }}>
-                      <label className="label-strong">Release percentage</label>
+                      <label className="label-strong">{t('createCampaign.milestoneRelease')}</label>
                       <input
                         type="number"
                         inputMode="decimal"
@@ -702,12 +732,12 @@ export default function CreateCampaign() {
 
             {form.milestones.length < 5 && (
               <button type="button" className="btn-secondary" style={{ width: '100%', marginTop: '1rem' }} onClick={addMilestone}>
-                + Add milestone
+                {t('createCampaign.addMilestone')}
               </button>
             )}
 
             <div className="alert alert--info" style={{ marginTop: '1.25rem' }} role="status">
-              <strong>Launch summary:</strong> {form.title || 'Untitled'} with a goal of {form.target_amount || '—'} {form.asset_type}
+              <strong>{t('createCampaign.launchSummary')}</strong> {form.title || 'Untitled'} with a goal of {form.target_amount || '—'} {form.asset_type}
               {form.min_contribution && ` (Min: ${form.min_contribution} ${form.asset_type})`}
               {form.max_contribution && ` (Max: ${form.max_contribution} ${form.asset_type})`}
               {form.max_per_user && ` (Cap: ${form.max_per_user} ${form.asset_type})`}
@@ -722,7 +752,7 @@ export default function CreateCampaign() {
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem', marginTop: '1.25rem' }}>
               <button type="submit" className="btn-primary" disabled={loading} style={{ width: '100%' }}>
-                {loading ? 'Creating wallet…' : 'Launch campaign'}
+                {loading ? t('createCampaign.creatingWallet') : t('createCampaign.launchCampaign')}
               </button>
               <button
                 type="button"
@@ -743,7 +773,7 @@ export default function CreateCampaign() {
 
       <p style={{ marginTop: '1.5rem', fontSize: '0.85rem', color: 'var(--color-text-hint)' }}>
         <Link to="/" style={{ color: 'var(--color-accent)', fontWeight: 600 }}>
-          ← Back to campaigns
+          {t('createCampaign.backToCampaigns')}
         </Link>
       </p>
     </main>
