@@ -15,7 +15,8 @@ const STATUS_OPTIONS = ['', 'active', 'funded', 'closed', 'failed'];
 const ASSET_OPTIONS = ['', 'USDC', 'XLM'];
 const SORT_OPTIONS = [
   { value: 'newest', label: 'Newest' },
-  { value: 'most_funded', label: 'Most funded' },
+  { value: 'trending', label: 'Trending' },
+  { value: 'funded', label: 'Most funded' },
   { value: 'closest_to_goal', label: 'Closest to goal' },
 ];
 const CATEGORY_LABELS = {
@@ -44,11 +45,24 @@ export default function Home() {
   const [welcomeNewUser, setWelcomeNewUser] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
   const [searchInput, setSearchInput] = useState(() => searchParams.get('search') || '');
+  const [sort, setSort] = useState(() => searchParams.get('sort') || 'newest');
   const [categoryCounts, setCategoryCounts] = useState([]);
 
   const search = searchParams.get('search') || '';
   const status = searchParams.get('status') || '';
   const asset = searchParams.get('asset') || '';
+
+  useEffect(() => {
+    const urlSort = searchParams.get('sort') || 'newest';
+    if (urlSort !== sort) {
+      setSort(urlSort);
+    }
+  }, [searchParams]);
+
+  const handleSortChange = (newSort) => {
+    setSort(newSort);
+    setFilters({ sort: newSort });
+  };
   const category = searchParams.get('category') || '';
   const sort = searchParams.get('sort') || 'newest';
 
@@ -247,7 +261,7 @@ export default function Home() {
           Sort by
           <select
             value={sort}
-            onChange={(e) => setFilters({ sort: e.target.value })}
+            onChange={(e) => handleSortChange(e.target.value)}
             style={styles.filterInput}
           >
             {SORT_OPTIONS.map((option) => (
@@ -280,6 +294,23 @@ export default function Home() {
       </div>
 
       <h2 style={styles.sectionTitle}>Active campaigns</h2>
+
+      <div style={styles.sortBar}>
+        {[
+          { value: 'newest',   label: 'Newest' },
+          { value: 'trending', label: '🔥 Trending' },
+          { value: 'funded',   label: 'Most funded' },
+        ].map((opt) => (
+          <button
+            key={opt.value}
+            type="button"
+            className={sort === opt.value ? 'pill-active' : 'pill'}
+            onClick={() => handleSortChange(opt.value)}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
 
       {loading ? (
         <div style={styles.grid}>
@@ -368,6 +399,12 @@ const styles = {
   },
   muted: { fontSize: '0.85rem', color: 'var(--color-text-hint)', maxWidth: '320px', lineHeight: 1.4, textAlign: 'center' },
   sectionTitle: { fontSize: '1.2rem', fontWeight: 700, marginBottom: '1.1rem', color: 'var(--color-text-primary)' },
+  sortBar: {
+    display: 'flex',
+    gap: '0.5rem',
+    marginBottom: '1.25rem',
+    flexWrap: 'wrap',
+  },
   filterBar: {
     display: 'grid',
     gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',

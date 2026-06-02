@@ -315,6 +315,7 @@ test('GET /api/campaigns supports search, asset filter, and sort', async () => {
   assert.ok(listQuery.params.includes('USDC'));
 });
 
+test('GET /api/campaigns supports sort=trending with CTE query', async () => {
 test('GET /api/campaigns/categories returns category counts', async () => {
   const app = buildApp({
     queryImpl: async (text, params) => {
@@ -341,6 +342,7 @@ test('GET /api/campaigns supports category filter', async () => {
   const app = buildApp({
     queryImpl: async (text, params) => {
       queries.push({ text, params });
+      if (text.includes('COUNT(*)::int AS total')) {
       if (text.includes('AS total')) {
         return { rows: [{ total: 1 }] };
       }
@@ -354,6 +356,27 @@ test('GET /api/campaigns supports category filter', async () => {
             status: 'active',
             raised_amount: '80',
             target_amount: '100',
+            recentContributions: 3,
+            recent_contributions: 3,
+            recent_volume: 150,
+            trending_score: 380,
+          },
+        ],
+      };
+    },
+  });
+
+  const response = await request(app).get('/api/campaigns?sort=trending');
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.total, 1);
+  assert.equal(response.body.campaigns.length, 1);
+  assert.equal(response.body.campaigns[0].recentContributions, 3);
+  
+  const listQuery = queries.find((q) => q.text.includes('WITH recent AS'));
+  assert.ok(listQuery);
+  assert.match(listQuery.text, /ORDER BY trending_score DESC/i);
+});
             category: 'technology',
           },
         ],

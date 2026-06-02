@@ -85,6 +85,9 @@ export default function CampaignCard({ campaign }) {
           >
             <span style={styles.asset}>{campaign.asset_type}</span>
             <CampaignStatusBadge status={campaign.status} />
+            {campaign.recentContributions > 0 && (
+              <span style={styles.trending}>
+                {campaign.recentContributions} contribution{campaign.recentContributions > 1 ? 's' : ''} in 48h
             {campaign.category && (
               <span style={styles.categoryBadge}>
                 {CATEGORY_LABELS[campaign.category] || campaign.category}

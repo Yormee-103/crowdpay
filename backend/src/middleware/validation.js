@@ -4,7 +4,7 @@ const { getSupportedAssetCodes } = require('../services/stellarService');
 
 const SUPPORTED_ASSETS = getSupportedAssetCodes();
 const VALID_CAMPAIGN_STATUSES = ['active', 'funded', 'closed', 'failed'];
-const VALID_ORDER_BY = ['newest', 'ending_soon', 'most_funded', 'most_backed', 'closest_to_goal'];
+const VALID_ORDER_BY = ['newest', 'ending_soon', 'most_funded', 'most_backed', 'closest_to_goal', 'trending'];
 const VALID_CATEGORIES = [
   'technology', 'community', 'arts', 'education',
   'environment', 'health', 'business', 'open_source', 'other',
