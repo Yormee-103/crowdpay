@@ -549,6 +549,8 @@ export default function Campaign() {
       setRefundError(err.message || "Failed to initiate refund.");
     } finally {
       setRefundBusy(false);
+    }
+  }
   async function handleDeleteCampaign() {
     setDeleteError("");
     if (!campaign) return;
@@ -1093,15 +1095,7 @@ export default function Campaign() {
             marginBottom: "1.75rem",
           }}
         >
-          <button
-            type="button"
-            className="btn-secondary"
-            style={{
-              display: "flex",
-              gap: "0.65rem",
-              marginBottom: "1.75rem",
-            }}
-          >
+
             <button
               type="button"
               className="btn-secondary"
@@ -1542,20 +1536,56 @@ export default function Campaign() {
           style={{ marginBottom: "1rem" }}
           data-no-print
         >
-          Contributions{" "}
-          {contributions !== null ? `(${totalContributions})` : ""}
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={activeTab === "updates"}
-          className={activeTab === "updates" ? "btn-primary" : "btn-secondary"}
-          onClick={() => setActiveTab("updates")}
-          style={styles.tabButton}
-        >
-          Updates ({updates.length})
-        </button>
-      </div>
+          <strong style={{ marginBottom: "0.5rem", display: "block" }}>
+            {editingUpdateId ? "Edit update" : "Post update"}
+          </strong>
+          <input
+            placeholder="Update title"
+            value={updateForm.title}
+            onChange={(e) =>
+              setUpdateForm((s) => ({ ...s, title: e.target.value }))
+            }
+            required
+            style={{ marginBottom: "0.5rem" }}
+          />
+          <textarea
+            placeholder="Write markdown update..."
+            value={updateForm.body}
+            onChange={(e) =>
+              setUpdateForm((s) => ({ ...s, body: e.target.value }))
+            }
+            rows={4}
+            required
+          />
+          {updatesError && (
+            <div style={{ color: "var(--color-status-error)", fontSize: "0.85rem", marginTop: "0.5rem" }}>
+              {updatesError}
+            </div>
+          )}
+          <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.5rem" }}>
+            <button
+              type="submit"
+              className="btn-primary"
+              disabled={updateBusy}
+            >
+              {updateBusy ? "Saving..." : editingUpdateId ? "Save changes" : "Post"}
+            </button>
+            {editingUpdateId && (
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => {
+                  setEditingUpdateId(null);
+                  setUpdateForm({ title: "", body: "" });
+                  setUpdatesError("");
+                }}
+              >
+                Cancel
+              </button>
+            )}
+          </div>
+        </form>
+      )}
           {updates.map((update) => (
             <article key={update.id} className="campaign-card">
               <div
@@ -1589,8 +1619,7 @@ export default function Campaign() {
               />
             </article>
           ))}
-        </div>
-      )}
+
 
       {/* Analytics Section */}
       {analytics && (
@@ -1692,159 +1721,8 @@ export default function Campaign() {
         </div>
       )}
 
-      <h2 style={styles.sectionTitle}>
-        Backer Wall {contributions !== null ? `(${totalContributions})` : ""}
-        {isLive && (
-          <span style={styles.liveIndicator} title="Live updates active">
-            <span style={styles.liveDot} />
-            Live
-          </span>
-        )}
-      </h2>
-      {contributions === null ? (
-        <ContributionListSkeleton />
-      ) : contributions.length === 0 ? (
-        <div style={styles.emptyBackers}>
-          <p>Be the first to back this!</p>
-          <p
-            style={{ fontSize: "0.9rem", color: "var(--color-text-secondary)", marginTop: "0.25rem" }}
-          >
-            Every contribution counts towards making this goal a reality.
-          </p>
-        </div>
-      ) : (
-        <>
-          <div style={styles.list} className="contributions-list">
-            {contributions.map((c) => (
-              <ContributionRow key={c.id} c={c} />
-            ))}
-          </div>
-          {totalContributions > 10 && (
-            <div style={{ display: 'flex', justifyContent: 'center', marginTop: '1rem' }}>
-              <button
-                type="button"
-                className="btn-secondary"
-                onClick={() => setShowAll((prev) => !prev)}
-                style={{ padding: '0.5rem 1.5rem', fontSize: '0.9rem', cursor: 'pointer' }}
-              >
-                <button
-                  type="submit"
-                  className="btn-primary"
-                  disabled={updateBusy}
-                >
-                  {updateBusy
-                    ? "Saving..."
-                    : editingUpdateId
-                      ? "Save update"
-                      : "Post update"}
-                </button>
 
-                {editingUpdateId && (
-                  <button
-                    type="button"
-                    className="btn-secondary"
-                    onClick={cancelUpdateEdit}
-                  >
-                    Cancel
-                  </button>
-                )}
-              </div>
-            </form>
-          )}
 
-          {updates.length === 0 ? (
-            <p
-              style={{ color: "var(--color-text-muted)", marginBottom: "1rem" }}
-            >
-              No updates yet — the creator hasn't posted anything.
-            </p>
-          ) : (
-            <div
-              style={{
-                display: "grid",
-                gap: "0.75rem",
-                marginBottom: "1.25rem",
-              }}
-            >
-              {updates.map((update) => (
-                <article key={update.id} className="campaign-card">
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      gap: "0.5rem",
-                      flexWrap: "wrap",
-                    }}
-                  >
-                    <strong>{update.title}</strong>
-                    <span
-                      style={{
-                        color: "var(--color-text-hint)",
-                        fontSize: "0.85rem",
-                      }}
-                    >
-                      {update.author_name} •{" "}
-                      {new Date(update.created_at).toLocaleString()}
-                    </span>
-                  </div>
-
-                  <div
-                    style={{
-                      marginTop: "0.5rem",
-                      color: "var(--color-text-primary)",
-                      lineHeight: 1.5,
-                    }}
-                    dangerouslySetInnerHTML={{
-                      __html: markdownToHtml(update.body),
-                    }}
-                  />
-
-                  {canPostUpdate && (
-                    <div
-                      style={{
-                        display: "flex",
-                        gap: "0.5rem",
-                        marginTop: "0.75rem",
-                      }}
-                    >
-                      {canEditUpdate(update) && (
-                        <button
-                          type="button"
-                          className="btn-secondary"
-                          onClick={() => startEditUpdate(update)}
-                          style={{
-                            fontSize: "0.85rem",
-                            padding: "0.4rem 0.75rem",
-                          }}
-                        >
-                          Edit
-                        </button>
-                      )}
-
-                      <button
-                        type="button"
-                        className="btn-secondary"
-                        onClick={() => deleteUpdate(update.id)}
-                        style={{
-                          fontSize: "0.85rem",
-                          padding: "0.4rem 0.75rem",
-                          color: "var(--color-status-error)",
-                          borderColor: "var(--color-status-error)",
-                        }}
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  )}
-                </article>
-              ))}
-            </div>
-          )}
-        </section>
-      )}
-
-      {activeTab === "contributions" && (
-        <section role="tabpanel">
           <h2 style={styles.sectionTitle}>
             Backer Wall{" "}
             {contributions !== null ? `(${totalContributions})` : ""}
@@ -1870,30 +1748,7 @@ export default function Campaign() {
               >
                 Every contribution counts towards making this goal a reality.
               </p>
-      <h2 style={styles.sectionTitle}>
-        Backer Wall {contributions !== null ? `(${totalContributions})` : ""}
-        {isLive && (
-          <span style={styles.liveIndicator} title="Live updates active">
-            <span style={styles.liveDot} />
-            Live
-          </span>
-        )}
-      </h2>
-      {contributions === null ? (
-        <ContributionListSkeleton />
-      ) : contributions.length === 0 ? (
-        <div style={styles.emptyBackers}>
-          <p>Be the first to back this!</p>
-          <p
-            style={{
-              fontSize: "0.9rem",
-              color: "var(--color-text-secondary)",
-              marginTop: "0.25rem",
-            }}
-          >
-            Every contribution counts towards making this goal a reality.
-          </p>
-        </div>
+            </div>
       ) : (
         <>
           <div style={styles.list} className="contributions-list">
@@ -1922,40 +1777,10 @@ export default function Campaign() {
                 {showAll ? "Show less" : `Show all (${totalContributions})`}
               </button>
             </div>
-          ) : (
-            <>
-              <div style={styles.list}>
-                {contributions.map((c) => (
-                  <ContributionRow key={c.id} c={c} />
-                ))}
-              </div>
-
-              {totalContributions > 10 && (
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "center",
-                    marginTop: "1rem",
-                  }}
-                >
-                  <button
-                    type="button"
-                    className="btn-secondary"
-                    onClick={() => setShowAll((prev) => !prev)}
-                    style={{
-                      padding: "0.5rem 1.5rem",
-                      fontSize: "0.9rem",
-                      cursor: "pointer",
-                    }}
-                  >
-                    {showAll ? "Show less" : `Show all (${totalContributions})`}
-                  </button>
-                </div>
               )}
             </>
           )}
-        </section>
-      )}
+
 
       {showModal && (
         <ContributeModal
