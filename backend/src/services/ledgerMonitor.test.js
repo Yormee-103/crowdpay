@@ -36,7 +36,11 @@ function buildLedgerMonitor(mockQuery) {
     './stellarService': { getCampaignBalance: async () => ({}) },
     './webhookDispatcher': {
       emitWebhookEventForUser: async () => {},
+      emitWebhookEventForCampaign: async () => {},
       WEBHOOK_EVENTS: { CAMPAIGN_FUNDED: 'campaign.funded', CONTRIBUTION_RECEIVED: 'contribution.received' },
+    },
+    './campaignStatusActions': {
+      triggerCampaignStatusActions: async () => {},
     },
   });
 

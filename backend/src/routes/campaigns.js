@@ -7,14 +7,13 @@ const {
   createCampaignWallet,
   getCampaignBalance,
   getSupportedAssetCodes,
-  buildWithdrawalTransaction,
 } = require('../services/stellarService');
 const { encryptSecret } = require('../services/walletService');
 const { watchCampaignWallet, addSSEClient, removeSSEClient } = require('../services/ledgerMonitor');
 const { emitWebhookEventForUser, WEBHOOK_EVENTS } = require('../services/webhookDispatcher');
 const { refreshCampaignStatus, refreshActiveCampaignStatuses } = require('../services/campaignStatusService');
+const { queueFailedCampaignRefunds } = require('../services/campaignStatusActions');
 const { invokeContract, encodeMilestone, nativeToScVal } = require('../services/sorobanService');
-const { insertWithdrawalPendingSignatures } = require('../services/stellarTransactionService');
 const { sendEmail } = require('../services/emailService');
 const { uploadCampaignCoverImage } = require('../services/storage');
 const { isKycRequiredForCampaigns } = require('../services/kycProvider');
@@ -140,16 +139,6 @@ function normalizeMilestonesInput(input) {
   }
 
   return normalized;
-}
-
-async function logWithdrawalEvent(client, { withdrawalRequestId, actorUserId, action, note, metadata }) {
-  const runner = client || db;
-  await runner.query(
-    `INSERT INTO withdrawal_approval_events
-       (withdrawal_request_id, actor_user_id, action, note, metadata)
-     VALUES ($1, $2, $3, $4, $5::jsonb)`,
-    [withdrawalRequestId, actorUserId || null, action, note || null, metadata ? JSON.stringify(metadata) : null]
-  );
 }
 
 // List campaigns with optional search, filtering, sorting, and pagination
@@ -599,70 +588,15 @@ router.post('/:id/trigger-refunds', requireAuth, requireRole('admin'), asyncHand
     return res.status(409).json({ error: 'Refunds may only be triggered for failed campaigns' });
   }
 
-  const { rows: contributions } = await db.query(
-    `SELECT c.*
-       FROM contributions c
-       WHERE c.campaign_id = $1
-         AND NOT EXISTS (
-           SELECT 1 FROM withdrawal_requests wr WHERE wr.contribution_id = c.id
-         )
-       ORDER BY c.created_at ASC`,
-    [campaignId]
-  );
-
-  if (!contributions.length) {
-    return res.json({ refundsCreated: 0 });
-  }
-
-  const client = await db.connect();
   try {
-    await client.query('BEGIN');
-
-    const created = [];
-    for (const contribution of contributions) {
-      const unsignedXdr = await buildWithdrawalTransaction({
-        campaignWalletPublicKey: campaign.wallet_public_key,
-        destinationPublicKey: contribution.sender_public_key,
-        amount: contribution.amount,
-        asset: contribution.asset,
-      });
-
-      const { rows: requestRows } = await client.query(
-        `INSERT INTO withdrawal_requests
-           (campaign_id, requested_by, amount, destination_key, unsigned_xdr,
-            creator_signed, platform_signed, contribution_id, is_refund)
-         VALUES ($1, $2, $3, $4, $5, FALSE, FALSE, $6, TRUE)
-         RETURNING id`,
-        [campaignId, req.user.userId, contribution.amount, contribution.sender_public_key, unsignedXdr, contribution.id]
-      );
-
-      const refundRequestId = requestRows[0].id;
-      await logWithdrawalEvent(client, {
-        withdrawalRequestId: refundRequestId,
-        actorUserId: req.user.userId,
-        action: 'requested',
-        note: 'Refund requested for failed campaign',
-        metadata: { contribution_id: contribution.id, amount: contribution.amount, asset: contribution.asset },
-      });
-      await insertWithdrawalPendingSignatures(client, {
-        campaignId,
-        withdrawalRequestId: refundRequestId,
-        userId: req.user.userId,
-        unsignedXdr,
-        metadata: { refund_for_contribution_id: contribution.id, amount: contribution.amount, asset: contribution.asset },
-      });
-
-      created.push({ contribution_id: contribution.id, refund_request_id: refundRequestId });
+    const { refundsCreated, refunds } = await queueFailedCampaignRefunds(campaignId, req.user.userId);
+    if (refundsCreated === 0) {
+      return res.json({ refundsCreated: 0 });
     }
-
-    await client.query('COMMIT');
-    res.status(201).json({ refundsCreated: created.length, refunds: created });
+    res.status(201).json({ refundsCreated, refunds });
   } catch (err) {
-    await client.query('ROLLBACK');
     logger.error('Refund trigger failed', { campaign_id: campaignId, error: err.message });
     res.status(500).json({ error: 'Could not trigger refunds for campaign' });
-  } finally {
-    client.release();
   }
 }));
 

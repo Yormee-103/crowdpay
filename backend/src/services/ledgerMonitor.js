@@ -18,7 +18,6 @@ const {
   WEBHOOK_EVENTS,
 } = require("./webhookDispatcher");
 const cache = require("../utils/cache");
-const { createNotification } = require("./notifications");
 const Sentry = require("@sentry/node");
 
 /** wallet_public_key -> stream metadata */
@@ -408,20 +407,16 @@ async function handlePayment(campaignId, walletPublicKey, payment) {
       );
 
       if (postCommitHooks.fundedCampaign) {
-        emitWebhookEventForUser(
-          postCommitHooks.fundedCampaign.creator_id,
-          WEBHOOK_EVENTS.CAMPAIGN_FUNDED,
-          { campaign: postCommitHooks.fundedCampaign },
+        const { triggerCampaignStatusActions } = require('./campaignStatusActions');
+        triggerCampaignStatusActions(
+          { id: postCommitHooks.campaignId, status: 'funded' },
+          'active',
         ).catch((e) =>
-          logger.error("Funded webhook emit failed", { error: e.message }),
+          logger.error('Funded status actions failed', {
+            campaign_id: postCommitHooks.campaignId,
+            error: e.message,
+          }),
         );
-
-        createNotification(postCommitHooks.fundedCampaign.creator_id, {
-          type: 'goal_reached',
-          title: 'Goal reached!',
-          body: `Your campaign "${postCommitHooks.fundedCampaign.title}" has reached its funding goal.`,
-          link: `/campaigns/${postCommitHooks.campaignId}`,
-        }).catch(() => {});
       }
     });
   }

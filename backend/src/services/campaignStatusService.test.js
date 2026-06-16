@@ -2,8 +2,9 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const proxyquire = require('proxyquire').noCallThru();
 
-test('refreshActiveCampaignStatuses marks funded and failed campaigns', async () => {
+test('refreshActiveCampaignStatuses marks funded and failed campaigns and triggers actions', async () => {
   const queries = [];
+  const triggered = [];
   const { refreshActiveCampaignStatuses } = proxyquire('./campaignStatusService', {
     '../config/database': {
       query: async (text) => {
@@ -18,16 +19,23 @@ test('refreshActiveCampaignStatuses marks funded and failed campaigns', async ()
       },
     },
     '../config/logger': { info: () => {}, error: () => {} },
+    './campaignStatusActions': {
+      triggerCampaignStatusActions: async (campaign) => {
+        triggered.push(campaign);
+      },
+    },
   });
 
   const result = await refreshActiveCampaignStatuses();
   assert.equal(result.funded.length, 1);
   assert.equal(result.failed.length, 1);
+  assert.equal(triggered.length, 2);
   assert.ok(queries.some((q) => q.includes("SET status = 'funded'")));
   assert.ok(queries.some((q) => q.includes("SET status = 'failed'")));
 });
 
-test('refreshCampaignStatus updates a single campaign', async () => {
+test('refreshCampaignStatus updates a single campaign and triggers actions', async () => {
+  const triggered = [];
   const { refreshCampaignStatus } = proxyquire('./campaignStatusService', {
     '../config/database': {
       query: async (text, params) => {
@@ -40,9 +48,15 @@ test('refreshCampaignStatus updates a single campaign', async () => {
       },
     },
     '../config/logger': { info: () => {}, error: () => {} },
+    './campaignStatusActions': {
+      triggerCampaignStatusActions: async (campaign) => {
+        triggered.push(campaign);
+      },
+    },
   });
 
   const result = await refreshCampaignStatus('camp-uuid');
   assert.equal(result.funded?.status, 'funded');
   assert.equal(result.failed, null);
+  assert.equal(triggered.length, 1);
 });

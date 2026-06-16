@@ -1,5 +1,21 @@
 const db = require('../config/database');
 const logger = require('../config/logger');
+const { triggerCampaignStatusActions } = require('./campaignStatusActions');
+
+const PREVIOUS_STATUS = 'active';
+
+async function runStatusActionsForCampaign(campaign) {
+  if (!campaign) return;
+  try {
+    await triggerCampaignStatusActions(campaign, PREVIOUS_STATUS);
+  } catch (err) {
+    logger.error('Campaign status actions failed', {
+      campaign_id: campaign.id,
+      status: campaign.status,
+      error: err.message,
+    });
+  }
+}
 
 /**
  * Reconcile status for one campaign (active → funded or failed based on goal/deadline).
@@ -28,10 +44,15 @@ async function refreshCampaignStatus(campaignId, client) {
     [campaignId]
   );
 
-  return {
+  const result = {
     failed: failed[0] || null,
     funded: funded[0] || null,
   };
+
+  if (result.funded) await runStatusActionsForCampaign(result.funded);
+  if (result.failed) await runStatusActionsForCampaign(result.failed);
+
+  return result;
 }
 
 /**
@@ -61,6 +82,13 @@ async function refreshActiveCampaignStatuses() {
       funded_count: funded.length,
       failed_count: failed.length,
     });
+  }
+
+  for (const campaign of funded) {
+    await runStatusActionsForCampaign(campaign);
+  }
+  for (const campaign of failed) {
+    await runStatusActionsForCampaign(campaign);
   }
 
   return { funded, failed };

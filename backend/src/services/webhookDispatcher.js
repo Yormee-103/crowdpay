@@ -3,6 +3,7 @@ const db = require('../config/database');
 
 const WEBHOOK_EVENTS = {
   CAMPAIGN_FUNDED: 'campaign.funded',
+  CAMPAIGN_FAILED: 'campaign.failed',
   CONTRIBUTION_RECEIVED: 'contribution.received',
   CONTRIBUTION_INDEXED: 'contribution.indexed', // campaign-level event
   MILESTONE_APPROVED: 'milestone.approved',
