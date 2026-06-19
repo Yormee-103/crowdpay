@@ -184,7 +184,7 @@ router.get('/', getCampaignsValidation, validateRequest, asyncHandler(async (req
    *                   items:
    *                     type: object
    */
-  const { search, status, asset, sort = 'newest' } = req.query;
+  const { search, status, asset, category, sort = 'newest' } = req.query;
   const limit = Math.min(Number(req.query.limit || 20), 100);
   const offset = Math.max(Number(req.query.offset || 0), 0);
   const filters = [];
@@ -203,12 +203,13 @@ router.get('/', getCampaignsValidation, validateRequest, asyncHandler(async (req
     params.push(asset);
     filters.push(`c.asset_type = $${params.length}`);
   }
+  if (category) {
+    params.push(category);
+    filters.push(`c.category = $${params.length}`);
+  }
   if (search) {
-    const escaped = String(search).replace(/[%_\\]/g, '\\$&');
-    params.push(`%${escaped}%`);
-    filters.push(
-      `(c.title ILIKE $${params.length} OR COALESCE(c.description, '') ILIKE $${params.length})`
-    );
+    params.push(search);
+    filters.push(`c.search_vector @@ websearch_to_tsquery('english', $${params.length})`);
   }
 
   const whereClause = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
@@ -218,6 +219,7 @@ router.get('/', getCampaignsValidation, validateRequest, asyncHandler(async (req
 
   const sortExpressions = {
     newest: 'c.created_at DESC',
+    trending: `(SELECT COUNT(*) FROM contributions ctr WHERE ctr.campaign_id = c.id AND ctr.created_at >= NOW() - INTERVAL '48 hours') DESC`,
     ending_soon: 'c.deadline ASC NULLS LAST',
     most_funded: 'c.raised_amount DESC',
     most_backed: '(SELECT COUNT(*) FROM contributions ctr WHERE ctr.campaign_id = c.id) DESC',
