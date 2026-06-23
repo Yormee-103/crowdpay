@@ -269,7 +269,6 @@ export default function Dashboard() {
         }}
       >
         {visibleTabs.map((tab) => (
-        {tabs.map((tab) => (
           <button
             key={tab.id}
             type="button"
@@ -667,6 +666,9 @@ export default function Dashboard() {
               </>
             )}
           </div>
+        </section>
+      )}
+
       {activeTab === 'referrals' && isCreator && (
         <section role="tabpanel" aria-labelledby="tab-referrals">
           {referralLoading ? (
