@@ -78,9 +78,42 @@ router.delete('/:id', requireAuth, async (req, res) => {
   res.json({ revoked: true, id: rows[0].id });
 });
 
-router.get('/deliveries', requireAuth, async (req, res) => {
+async function fetchDeliveryAttempts(deliveryIds, deliveryKind) {
+  if (!deliveryIds.length) return new Map();
+  const { rows } = await db.query(
+    `SELECT delivery_id, attempt_number, response_status, response_body_snippet,
+            error, created_at
+     FROM webhook_delivery_attempts
+     WHERE delivery_kind = $1 AND delivery_id = ANY($2::uuid[])
+     ORDER BY created_at ASC`,
+    [deliveryKind, deliveryIds]
+  );
+  const byDelivery = new Map();
+  for (const row of rows) {
+    if (!byDelivery.has(row.delivery_id)) byDelivery.set(row.delivery_id, []);
+    byDelivery.get(row.delivery_id).push({
+      attempt_number: row.attempt_number,
+      response_status: row.response_status,
+      response_body_snippet: row.response_body_snippet,
+      error: row.error,
+      created_at: row.created_at,
+    });
+  }
+  return byDelivery;
+}
+
+async function listDeliveriesForUser(req, res, webhookId) {
   const limit = Math.min(parseInt(req.query.limit, 10) || 50, 200);
-  const webhookId = req.query.webhook_id || null;
+
+  if (webhookId) {
+    const { rows: owned } = await db.query(
+      'SELECT id FROM webhooks WHERE id = $1 AND user_id = $2',
+      [webhookId, req.user.userId]
+    );
+    if (!owned.length) {
+      return res.status(404).json({ error: 'Webhook not found' });
+    }
+  }
 
   const params = [req.user.userId];
   let whClause = '';
@@ -93,7 +126,7 @@ router.get('/deliveries', requireAuth, async (req, res) => {
   const { rows } = await db.query(
     `SELECT d.id, d.webhook_id, d.event_type, d.status, d.response_status,
             d.response_body_snippet, d.attempt_count, d.last_error, d.next_retry_at,
-            d.delivered_at, d.created_at, d.updated_at, w.url AS webhook_url
+            d.delivered_at, d.failed_at, d.created_at, d.updated_at, w.url AS webhook_url
      FROM webhook_deliveries d
      JOIN webhooks w ON w.id = d.webhook_id
      WHERE w.user_id = $1 ${whClause}
@@ -101,7 +134,22 @@ router.get('/deliveries', requireAuth, async (req, res) => {
      LIMIT $${params.length}`,
     params
   );
-  res.json(rows);
+
+  const attemptsByDelivery = await fetchDeliveryAttempts(rows.map((r) => r.id), 'user');
+  res.json(
+    rows.map((row) => ({
+      ...row,
+      attempts: attemptsByDelivery.get(row.id) || [],
+    }))
+  );
+}
+
+router.get('/deliveries', requireAuth, async (req, res) => {
+  await listDeliveriesForUser(req, res, req.query.webhook_id || null);
+});
+
+router.get('/:id/deliveries', requireAuth, async (req, res) => {
+  await listDeliveriesForUser(req, res, req.params.id);
 });
 
 module.exports = router;

@@ -11,21 +11,67 @@ const WEBHOOK_EVENTS = {
 };
 
 const ALL_WEBHOOK_EVENTS = Object.values(WEBHOOK_EVENTS);
-const MAX_DELIVERY_ATTEMPTS = 5;
-const MAX_CAMPAIGN_DELIVERY_ATTEMPTS = 3;
+/** Initial delivery + 3 retries before marking dead */
+const MAX_DELIVERY_ATTEMPTS = 4;
+const MAX_CAMPAIGN_DELIVERY_ATTEMPTS = 4;
+/** Backoff after attempts 1, 2, 3 fail: 1 min, 5 min, 30 min */
+const RETRY_BACKOFF_MS = [60_000, 300_000, 1_800_000];
 
 function hmacSignature(secret, bodyUtf8) {
   return crypto.createHmac('sha256', secret).update(bodyUtf8, 'utf8').digest('hex');
 }
 
-function backoffMs(attemptNumber) {
-  return Math.min(30_000, 1000 * 2 ** Math.max(0, attemptNumber - 1));
+function backoffMs(attemptJustFailed) {
+  const idx = Math.min(Math.max(0, attemptJustFailed - 1), RETRY_BACKOFF_MS.length - 1);
+  return RETRY_BACKOFF_MS[idx];
 }
 
-function backoffMsForCampaign(attemptNumber) {
-  // Campaign webhooks: exponential backoff (5s, 30s, 5min)
-  const delays = [5000, 30000, 300000];
-  return delays[Math.min(attemptNumber - 1, delays.length - 1)];
+function backoffMsForCampaign(attemptJustFailed) {
+  return backoffMs(attemptJustFailed);
+}
+
+async function logDeliveryAttempt({
+  deliveryId,
+  deliveryKind,
+  attemptNumber,
+  responseStatus,
+  responseBodySnippet,
+  error,
+}) {
+  await db.query(
+    `INSERT INTO webhook_delivery_attempts
+       (delivery_id, delivery_kind, attempt_number, response_status, response_body_snippet, error)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [
+      deliveryId,
+      deliveryKind,
+      attemptNumber,
+      responseStatus,
+      responseBodySnippet,
+      error,
+    ]
+  );
+}
+
+async function markDeliveryFailed(table, deliveryId, errMsg, httpStatus, snippet) {
+  if (table === 'webhook_deliveries') {
+    await db.query(
+      `UPDATE webhook_deliveries
+       SET status = 'failed', last_error = $2, response_status = $3,
+           response_body_snippet = $4, failed_at = NOW(), updated_at = NOW()
+       WHERE id = $1`,
+      [deliveryId, errMsg, httpStatus, snippet]
+    );
+    return;
+  }
+
+  await db.query(
+    `UPDATE campaign_webhook_deliveries
+     SET status = 'failed', last_error = $2, response_status = $3,
+         failed_at = NOW(), updated_at = NOW()
+     WHERE id = $1`,
+    [deliveryId, errMsg, httpStatus]
+  );
 }
 
 /** Queue outbound webhook deliveries for every active endpoint owned by `ownerUserId`. */
@@ -63,20 +109,14 @@ async function processDelivery(deliveryId) {
   if (!rows.length) return;
   const row = rows[0];
   if (row.revoked_at) {
-    await db.query(
-      `UPDATE webhook_deliveries SET status = 'failed', last_error = 'webhook revoked', updated_at = NOW() WHERE id = $1`,
-      [deliveryId]
-    );
+    await markDeliveryFailed('webhook_deliveries', deliveryId, 'webhook revoked', null, null);
     return;
   }
   if (row.status === 'delivered') return;
 
   const nextAttempt = row.attempt_count + 1;
   if (nextAttempt > MAX_DELIVERY_ATTEMPTS) {
-    await db.query(
-      `UPDATE webhook_deliveries SET status = 'failed', last_error = $2, updated_at = NOW() WHERE id = $1`,
-      [deliveryId, 'max delivery attempts exceeded']
-    );
+    await markDeliveryFailed('webhook_deliveries', deliveryId, 'max delivery attempts exceeded', null, null);
     return;
   }
 
@@ -104,11 +144,29 @@ async function processDelivery(deliveryId) {
     });
     responseText = await res.text();
   } catch (err) {
-    await scheduleRetry(deliveryId, nextAttempt, err.message || String(err), null, null);
+    const errMsg = err.message || String(err);
+    await logDeliveryAttempt({
+      deliveryId,
+      deliveryKind: 'user',
+      attemptNumber: nextAttempt,
+      responseStatus: null,
+      responseBodySnippet: null,
+      error: errMsg,
+    });
+    await scheduleRetry(deliveryId, nextAttempt, errMsg, null, null);
     return;
   }
 
   const snippet = responseText.slice(0, 512);
+  await logDeliveryAttempt({
+    deliveryId,
+    deliveryKind: 'user',
+    attemptNumber: nextAttempt,
+    responseStatus: res.status,
+    responseBodySnippet: snippet,
+    error: res.ok ? null : `HTTP ${res.status}`,
+  });
+
   if (res.ok) {
     await db.query(
       `UPDATE webhook_deliveries
@@ -131,12 +189,7 @@ async function processDelivery(deliveryId) {
 
 async function scheduleRetry(deliveryId, attemptJustUsed, errMsg, httpStatus, snippet) {
   if (attemptJustUsed >= MAX_DELIVERY_ATTEMPTS) {
-    await db.query(
-      `UPDATE webhook_deliveries
-       SET status = 'failed', last_error = $2, response_status = $3, response_body_snippet = $4, updated_at = NOW()
-       WHERE id = $1`,
-      [deliveryId, errMsg, httpStatus, snippet]
-    );
+    await markDeliveryFailed('webhook_deliveries', deliveryId, errMsg, httpStatus, snippet);
     return;
   }
 
@@ -205,20 +258,14 @@ async function processCampaignWebhookDelivery(deliveryId) {
   if (!rows.length) return;
   const row = rows[0];
   if (!row.active) {
-    await db.query(
-      `UPDATE campaign_webhook_deliveries SET status = 'failed', last_error = 'webhook disabled', updated_at = NOW() WHERE id = $1`,
-      [deliveryId]
-    );
+    await markDeliveryFailed('campaign_webhook_deliveries', deliveryId, 'webhook disabled', null, null);
     return;
   }
   if (row.status === 'delivered') return;
 
   const nextAttempt = row.attempt_count + 1;
   if (nextAttempt > MAX_CAMPAIGN_DELIVERY_ATTEMPTS) {
-    await db.query(
-      `UPDATE campaign_webhook_deliveries SET status = 'failed', last_error = $2, failed_at = NOW(), updated_at = NOW() WHERE id = $1`,
-      [deliveryId, 'max delivery attempts exceeded']
-    );
+    await markDeliveryFailed('campaign_webhook_deliveries', deliveryId, 'max delivery attempts exceeded', null, null);
     return;
   }
 
@@ -246,9 +293,28 @@ async function processCampaignWebhookDelivery(deliveryId) {
     });
     responseText = await res.text();
   } catch (err) {
-    await scheduleCampaignWebhookRetry(deliveryId, nextAttempt, err.message || String(err), null);
+    const errMsg = err.message || String(err);
+    await logDeliveryAttempt({
+      deliveryId,
+      deliveryKind: 'campaign',
+      attemptNumber: nextAttempt,
+      responseStatus: null,
+      responseBodySnippet: null,
+      error: errMsg,
+    });
+    await scheduleCampaignWebhookRetry(deliveryId, nextAttempt, errMsg, null, null);
     return;
   }
+
+  const snippet = responseText.slice(0, 512);
+  await logDeliveryAttempt({
+    deliveryId,
+    deliveryKind: 'campaign',
+    attemptNumber: nextAttempt,
+    responseStatus: res.status,
+    responseBodySnippet: snippet,
+    error: res.ok ? null : `HTTP ${res.status}`,
+  });
 
   if (res.ok) {
     await db.query(
@@ -264,18 +330,14 @@ async function processCampaignWebhookDelivery(deliveryId) {
     deliveryId,
     nextAttempt,
     `HTTP ${res.status}`,
-    res.status
+    res.status,
+    snippet
   );
 }
 
-async function scheduleCampaignWebhookRetry(deliveryId, attemptJustUsed, errMsg, httpStatus) {
+async function scheduleCampaignWebhookRetry(deliveryId, attemptJustUsed, errMsg, httpStatus, snippet) {
   if (attemptJustUsed >= MAX_CAMPAIGN_DELIVERY_ATTEMPTS) {
-    await db.query(
-      `UPDATE campaign_webhook_deliveries
-       SET status = 'failed', last_error = $2, response_status = $3, failed_at = NOW(), updated_at = NOW()
-       WHERE id = $1`,
-      [deliveryId, errMsg, httpStatus]
-    );
+    await markDeliveryFailed('campaign_webhook_deliveries', deliveryId, errMsg, httpStatus, snippet);
     return;
   }
 
@@ -316,15 +378,37 @@ function startWebhookRetryPoller() {
   }, 5000);
 }
 
+async function resetDeliveryForManualRetry(table, deliveryId) {
+  const snippetReset =
+    table === 'webhook_deliveries' ? ', response_body_snippet = NULL' : '';
+  return db.query(
+    `UPDATE ${table}
+     SET status = 'pending',
+         attempt_count = 0,
+         next_retry_at = NULL,
+         last_error = NULL,
+         response_status = NULL${snippetReset},
+         failed_at = NULL,
+         updated_at = NOW()
+     WHERE id = $1 AND status IN ('failed', 'retrying')
+     RETURNING id`,
+    [deliveryId]
+  );
+}
+
 module.exports = {
   WEBHOOK_EVENTS,
   ALL_WEBHOOK_EVENTS,
   MAX_DELIVERY_ATTEMPTS,
   MAX_CAMPAIGN_DELIVERY_ATTEMPTS,
+  RETRY_BACKOFF_MS,
   hmacSignature,
+  backoffMs,
+  backoffMsForCampaign,
   emitWebhookEventForUser,
   emitWebhookEventForCampaign,
   processDelivery,
   processCampaignWebhookDelivery,
+  resetDeliveryForManualRetry,
   startWebhookRetryPoller,
 };

@@ -74,6 +74,7 @@ function buildApp() {
     '../services/webhookDispatcher': {
       processDelivery: async () => {},
       processCampaignWebhookDelivery: async () => {},
+      resetDeliveryForManualRetry: async () => ({ rows: [] }),
     },
     '../middleware/auth': {
       requireAuth: (req, _res, next) => {

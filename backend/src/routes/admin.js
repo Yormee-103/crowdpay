@@ -7,6 +7,7 @@ const { server } = require('../config/stellar');
 const {
   processDelivery,
   processCampaignWebhookDelivery,
+  resetDeliveryForManualRetry,
 } = require('../services/webhookDispatcher');
 const cache = require('../utils/cache');
 
@@ -816,7 +817,7 @@ router.get('/webhook-deliveries', async (req, res) => {
     );
 
     const { rows: campaignRows } = await db.query(
-      `SELECT d.id, d.webhook_id, d.event_type, d.status, d.attempt_count, d.last_error,
+      `SELECT d.id, d.webhook_id, d.event AS event_type, d.status, d.attempt_count, d.last_error,
               d.created_at, d.updated_at, w.url AS webhook_url, 'campaign' AS delivery_kind
        FROM campaign_webhook_deliveries d
        JOIN campaign_webhooks w ON w.id = d.webhook_id
@@ -844,13 +845,7 @@ router.post('/webhook-deliveries/:id/retry', async (req, res) => {
     const kind = req.body?.kind === 'campaign' ? 'campaign' : 'user';
     const table = kind === 'campaign' ? 'campaign_webhook_deliveries' : 'webhook_deliveries';
 
-    const { rows } = await db.query(
-      `UPDATE ${table}
-       SET status = 'pending', next_retry_at = NULL, updated_at = NOW()
-       WHERE id = $1 AND status IN ('failed', 'retrying')
-       RETURNING id`,
-      [req.params.id]
-    );
+    const { rows } = await resetDeliveryForManualRetry(table, req.params.id);
     if (!rows.length) {
       return res.status(404).json({ error: 'Failed delivery not found or not retryable' });
     }
