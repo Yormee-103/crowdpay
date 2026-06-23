@@ -8,6 +8,7 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { api } from '../services/api';
 import { stellarExpertTxUrl } from '../config/stellar';
+import KycPrompt from './KycPrompt';
 
 const SEND_OPTIONS = [
   { value: 'XLM', label: 'XLM', hint: 'Native Stellar' },
@@ -44,7 +45,7 @@ function friendlyFreighterError(err, fallback) {
 }
 
 export default function ContributeModal({ campaign, onClose, onSuccess, guestFreighterMode = false }) {
-  const { user, token } = useAuth();
+  const { user, token, updateUser } = useAuth();
   const [amount, setAmount] = useState('');
   const [sendAsset, setSendAsset] = useState(campaign.asset_type);
   const [paymentMethod, setPaymentMethod] = useState(guestFreighterMode ? 'freighter' : 'custodial');
@@ -79,6 +80,10 @@ export default function ContributeModal({ campaign, onClose, onSuccess, guestFre
   const isPathPayment = effectiveSendAsset !== campaign.asset_type;
   const destAmount = amount.trim();
 
+  const kycRequired =
+    user?.kyc_required_for_campaigns ??
+    String(import.meta.env.VITE_KYC_REQUIRED_FOR_CAMPAIGNS ?? 'true').toLowerCase() !== 'false';
+  const needsKyc = Boolean(user) && kycRequired && user.kyc_status !== 'verified';
 
   // Fetch anchor info and existing contributions on mount
   useEffect(() => {
@@ -465,7 +470,20 @@ export default function ContributeModal({ campaign, onClose, onSuccess, guestFre
         aria-labelledby="contribute-title"
         onClick={(e) => e.stopPropagation()}
       >
-        {phase === 'form' ? (
+        {needsKyc ? (
+          <>
+            <h2 id="contribute-title" style={styles.title}>
+              Identity verification required
+            </h2>
+            <KycPrompt
+              onUserUpdate={updateUser}
+              title="Verify your identity before contributing"
+            />
+            <button type="button" className="btn-secondary" style={{ marginTop: '1rem', width: '100%' }} onClick={handleClose}>
+              Close
+            </button>
+          </>
+        ) : phase === 'form' ? (
           <>
             <h2 id="contribute-title" style={styles.title}>
               Support this campaign
