@@ -245,6 +245,18 @@ function startReconciliationCron() {
   logger.info('Reconciliation cron scheduled (every 15 minutes)');
 }
 
+function startGithubStatsCron() {
+  if (process.env.ENABLE_GITHUB_STATS_CRON === 'false') return;
+  const cron = require('node-cron');
+  const { refreshAllCampaignGithubStats } = require('./services/campaignGithubService');
+  cron.schedule('0 * * * *', () => {
+    refreshAllCampaignGithubStats().catch((err) => {
+      logger.error('GitHub stats cron failed', { error: err.message });
+    });
+  });
+  logger.info('GitHub stats cron scheduled (hourly)');
+}
+
 async function bootstrap() {
   if (process.env.NODE_ENV === 'production') {
     await assertNoLegacyPlaintextUserWalletSecrets();
@@ -256,6 +268,7 @@ async function bootstrap() {
     startWebhookRetryPoller();
     startCampaignStatusCron();
     startReconciliationCron();
+    startGithubStatsCron();
   });
 }
 

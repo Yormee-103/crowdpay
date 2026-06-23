@@ -14,6 +14,7 @@ import VerificationBadge from "../components/VerificationBadge";
 import CampaignStatusBadge from "../components/CampaignStatusBadge";
 import { stellarExpertTxUrl } from "../config/stellar";
 import CampaignQRCode from "../components/CampaignQRCode";
+import CampaignGithubCard from "../components/CampaignGithubCard";
 import { getNetwork, signTransaction } from '@stellar/freighter-api';
 import { isConnected, getPublicKey } from "@stellar/freighter-api";
 
@@ -165,6 +166,7 @@ export default function Campaign() {
     title: "",
     description: "",
     deadline: "",
+    github_repo_url: "",
   });
   const [editError, setEditError] = useState("");
   const [editSuccess, setEditSuccess] = useState("");
@@ -462,6 +464,7 @@ export default function Campaign() {
       title: campaign.title || "",
       description: campaign.description || "",
       deadline: campaign.deadline ? campaign.deadline.split("T")[0] : "",
+      github_repo_url: campaign.github_repo_url || "",
     });
     setEditError("");
     setEditSuccess("");
@@ -470,7 +473,7 @@ export default function Campaign() {
 
   function handleCloseEditModal() {
     setIsEditingCampaign(false);
-    setEditFormData({ title: "", description: "", deadline: "" });
+    setEditFormData({ title: "", description: "", deadline: "", github_repo_url: "" });
     setEditError("");
     setEditSuccess("");
   }
@@ -515,6 +518,10 @@ export default function Campaign() {
       ) {
         updates.deadline = editFormData.deadline || null;
       }
+      const currentGithubUrl = campaign.github_repo_url || "";
+      if (editFormData.github_repo_url !== currentGithubUrl) {
+        updates.github_repo_url = editFormData.github_repo_url.trim() || null;
+      }
 
       if (Object.keys(updates).length === 0) {
         setEditError("No changes to save");
@@ -525,7 +532,7 @@ export default function Campaign() {
       const updated = await api.updateCampaign(campaign.id, updates, token);
       setCampaign(updated);
       setIsEditingCampaign(false);
-      setEditFormData({ title: "", description: "", deadline: "" });
+      setEditFormData({ title: "", description: "", deadline: "", github_repo_url: "" });
       setEditSuccess("Campaign updated successfully!");
       setTimeout(() => setEditSuccess(""), 3000);
     } catch (err) {
@@ -932,6 +939,11 @@ export default function Campaign() {
         )}
         <p style={styles.desc}>{campaign.description}</p>
       </div>
+
+      <CampaignGithubCard
+        repoUrl={campaign.github_repo_url}
+        stats={campaign.campaign_github_stats}
+      />
 
       <div style={styles.card}>
         <div style={styles.amounts}>
@@ -2307,6 +2319,34 @@ export default function Campaign() {
                 onChange={(e) =>
                   setEditFormData({ ...editFormData, deadline: e.target.value })
                 }
+                style={{
+                  width: "100%",
+                  padding: "0.75rem",
+                  border: "1px solid #ddd",
+                  borderRadius: "6px",
+                  fontSize: "1rem",
+                  boxSizing: "border-box",
+                }}
+              />
+            </div>
+
+            <div style={{ marginBottom: "1.5rem" }}>
+              <label
+                style={{
+                  display: "block",
+                  fontWeight: 600,
+                  marginBottom: "0.5rem",
+                }}
+              >
+                GitHub repository (optional)
+              </label>
+              <input
+                type="url"
+                value={editFormData.github_repo_url}
+                onChange={(e) =>
+                  setEditFormData({ ...editFormData, github_repo_url: e.target.value })
+                }
+                placeholder="https://github.com/owner/repo"
                 style={{
                   width: "100%",
                   padding: "0.75rem",

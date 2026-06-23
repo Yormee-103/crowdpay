@@ -27,6 +27,10 @@ const {
 } = require('../middleware/validation');
 const asyncHandler = require('../utils/asyncHandler');
 const {
+  refreshCampaignGithubStats,
+  normalizeGithubRepoInput,
+} = require('../services/campaignGithubService');
+const {
   createCampaignInvite,
   resendCampaignInvite,
   cancelCampaignInvite,
@@ -679,7 +683,14 @@ router.post('/', requireAuth, requireRole('creator', 'admin'), createCampaignVal
    *       403:
    *         description: Forbidden
    */
-  const { title, description, target_amount, asset_type, deadline, milestones, min_contribution, max_contribution } = req.body;
+  const { title, description, target_amount, asset_type, deadline, milestones, min_contribution, max_contribution, github_repo_url } = req.body;
+
+  let normalizedGithubRepoUrl = null;
+  try {
+    normalizedGithubRepoUrl = normalizeGithubRepoInput(github_repo_url);
+  } catch (err) {
+    return res.status(err.statusCode || 422).json({ error: err.message });
+  }
 
   let normalizedMilestones;
   try {
@@ -739,11 +750,13 @@ router.post('/', requireAuth, requireRole('creator', 'admin'), createCampaignVal
     const { rows } = await client.query(
       `INSERT INTO campaigns
          (title, description, target_amount, asset_type, wallet_public_key, creator_id, deadline, 
-          min_contribution, max_contribution, escrow_contract_id, milestones_contract_id, platform_fee_bps)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+          min_contribution, max_contribution, escrow_contract_id, milestones_contract_id, platform_fee_bps,
+          github_repo_url)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
        RETURNING *`,
       [title, description, target_amount, asset_type, wallet.publicKey, req.user.userId, deadline, 
-       min_contribution || null, max_contribution || null, escrowContractId, milestonesContractId, platformFeeBps]
+       min_contribution || null, max_contribution || null, escrowContractId, milestonesContractId, platformFeeBps,
+       normalizedGithubRepoUrl]
     );
     campaign = rows[0];
 
@@ -786,13 +799,24 @@ router.post('/', requireAuth, requireRole('creator', 'admin'), createCampaignVal
 
   watchCampaignWallet(campaign.id, wallet.publicKey);
 
+  if (normalizedGithubRepoUrl) {
+    setImmediate(() => {
+      refreshCampaignGithubStats(campaign.id).catch((err) => {
+        logger.warn('Initial GitHub stats refresh failed', {
+          campaign_id: campaign.id,
+          error: err.message,
+        });
+      });
+    });
+  }
+
   res.status(201).json(campaign);
 }));
 
 // PATCH /campaigns/:id - Update campaign (title, description, deadline)
 router.patch('/:id', requireAuth, asyncHandler(async (req, res) => {
   const campaignId = req.params.id;
-  const { title, description, deadline } = req.body;
+  const { title, description, deadline, github_repo_url } = req.body;
 
   // Check if campaign exists and belongs to user
   const { rows: campaignRows } = await db.query(
@@ -871,13 +895,27 @@ router.patch('/:id', requireAuth, asyncHandler(async (req, res) => {
     updateParams.push(['deadline', deadline, `$${paramIndex++}`]);
   }
 
+  if (github_repo_url !== undefined) {
+    let normalizedGithubRepoUrl = null;
+    try {
+      normalizedGithubRepoUrl = normalizeGithubRepoInput(
+        github_repo_url === '' ? null : github_repo_url
+      );
+    } catch (err) {
+      return res.status(err.statusCode || 422).json({ error: err.message });
+    }
+    updates.github_repo_url = normalizedGithubRepoUrl;
+    updateParams.push(['github_repo_url', normalizedGithubRepoUrl, `$${paramIndex++}`]);
+    updateParams.push(['campaign_github_stats', null, `$${paramIndex++}`]);
+  }
+
   // Check if any valid updates were provided
   if (Object.keys(updates).length === 0) {
     return res.status(400).json({ error: 'No valid fields to update' });
   }
 
   // Check for invalid fields in request body
-  const allowedFields = ['title', 'description', 'deadline'];
+  const allowedFields = ['title', 'description', 'deadline', 'github_repo_url'];
   for (const field of Object.keys(req.body)) {
     if (!allowedFields.includes(field)) {
       return res.status(422).json({
@@ -901,6 +939,17 @@ router.patch('/:id', requireAuth, asyncHandler(async (req, res) => {
   const { rows: updatedRows } = await db.query(query, values);
   if (!updatedRows.length) {
     return res.status(404).json({ error: 'Campaign not found' });
+  }
+
+  if (github_repo_url !== undefined && updatedRows[0].github_repo_url) {
+    setImmediate(() => {
+      refreshCampaignGithubStats(updatedRows[0].id).catch((err) => {
+        logger.warn('GitHub stats refresh after update failed', {
+          campaign_id: updatedRows[0].id,
+          error: err.message,
+        });
+      });
+    });
   }
 
   res.json(updatedRows[0]);

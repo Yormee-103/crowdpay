@@ -65,6 +65,7 @@ export default function CreateCampaign() {
     max_per_user: '',
     show_backer_amounts: true,
     category: '',
+    github_repo_url: '',
   });
   const [coverImageFile, setCoverImageFile] = useState(null);
   const [coverImagePreview, setCoverImagePreview] = useState('');
@@ -261,6 +262,7 @@ export default function CreateCampaign() {
           min_contribution: form.min_contribution ? Number(form.min_contribution) : undefined,
           max_contribution: form.max_contribution ? Number(form.max_contribution) : undefined,
           max_per_user: form.max_per_user ? Number(form.max_per_user) : undefined,
+          github_repo_url: form.github_repo_url.trim() || undefined,
           milestones: form.milestones.length
             ? form.milestones.map((milestone) => ({
                 title: milestone.title.trim(),
@@ -591,6 +593,22 @@ export default function CreateCampaign() {
                   style={{ marginTop: '0.75rem', width: '100%', borderRadius: '12px', maxHeight: '220px', objectFit: 'cover' }}
                 />
               )}
+            </div>
+
+            <div className="form-stack" style={{ marginTop: '1rem' }}>
+              <label className="label-strong" htmlFor="cc-github">
+                GitHub repository <span style={{ fontWeight: 500, color: 'var(--color-text-muted)' }}>(optional)</span>
+              </label>
+              <input
+                id="cc-github"
+                type="url"
+                value={form.github_repo_url}
+                onChange={setField('github_repo_url')}
+                placeholder="https://github.com/owner/repo"
+              />
+              <p style={{ fontSize: '0.8rem', color: 'var(--color-text-hint)', marginTop: '0.35rem' }}>
+                Link your open source repo to show stars, contributors, and license on the campaign page.
+              </p>
             </div>
 
             <div className="form-stack" style={{ marginTop: '1rem' }}>

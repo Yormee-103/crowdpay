@@ -48,6 +48,8 @@ CREATE TABLE campaigns (
   featured            BOOLEAN DEFAULT FALSE,
   featured_at         TIMESTAMPTZ,
   featured_note       TEXT,
+  github_repo_url     TEXT,
+  campaign_github_stats JSONB,
   created_at          TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE TABLE IF NOT EXISTS campaign_updates (

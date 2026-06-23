@@ -180,6 +180,17 @@ const createCampaignValidation = [
     .optional({ nullable: true, checkFalsy: true })
     .isIn(VALID_CATEGORIES)
     .withMessage(`category must be one of: ${VALID_CATEGORIES.join(', ')}`),
+  body('github_repo_url')
+    .optional({ nullable: true, checkFalsy: true })
+    .isString()
+    .withMessage('github_repo_url must be a string')
+    .custom((value) => {
+      const { parseGithubRepoUrl } = require('../lib/githubRepo');
+      if (!parseGithubRepoUrl(value)) {
+        throw new Error('github_repo_url must be a valid GitHub repository URL');
+      }
+      return true;
+    }),
 ];
 
 const createCampaignUpdateValidation = [
