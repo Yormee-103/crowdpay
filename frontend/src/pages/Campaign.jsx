@@ -148,6 +148,7 @@ export default function Campaign() {
   );
   const [updates, setUpdates] = useState([]);
   const [milestones, setMilestones] = useState([]);
+  const [tiers, setTiers] = useState([]);
   const [updateForm, setUpdateForm] = useState({ title: "", body: "" });
   const [updateBusy, setUpdateBusy] = useState(false);
   const [updatesError, setUpdatesError] = useState("");
@@ -245,6 +246,10 @@ export default function Campaign() {
       .getMilestones(id)
       .then(setMilestones)
       .catch(() => setMilestones([]));
+    api
+      .getCampaignTiers(id)
+      .then((data) => setTiers(Array.isArray(data) ? data : []))
+      .catch(() => setTiers([]));
     api
       .getCampaignUpdates(id, { limit: 20 })
       .then(setUpdates)
@@ -943,6 +948,50 @@ export default function Campaign() {
         )}
         <p style={styles.desc}>{campaign.description}</p>
       </div>
+
+      {tiers.length > 0 && (
+        <div style={{ marginBottom: "1rem" }}>
+          <h2 style={styles.sectionTitle}>Reward tiers</h2>
+          <div style={{ display: "grid", gap: "0.85rem" }}>
+            {tiers.map((tier) => (
+              <div
+                key={tier.id}
+                style={{
+                  ...styles.card,
+                  marginBottom: 0,
+                  opacity: tier.sold_out ? 0.65 : 1,
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", gap: "0.75rem", flexWrap: "wrap", alignItems: "baseline" }}>
+                  <strong style={{ fontSize: "1.05rem" }}>{tier.title}</strong>
+                  <span style={styles.asset}>
+                    {Number(tier.min_amount).toLocaleString()}+ {tier.asset_type}
+                  </span>
+                </div>
+                {tier.description && (
+                  <p style={{ ...styles.small, marginTop: "0.5rem", lineHeight: 1.5 }}>
+                    {tier.description}
+                  </p>
+                )}
+                <div style={{ display: "flex", justifyContent: "space-between", gap: "0.75rem", flexWrap: "wrap", marginTop: "0.75rem" }}>
+                  {tier.estimated_delivery && (
+                    <span style={styles.small}>
+                      Estimated delivery: {new Date(tier.estimated_delivery).toLocaleDateString()}
+                    </span>
+                  )}
+                  <span style={{ ...styles.small, fontWeight: 700, marginLeft: "auto" }}>
+                    {tier.sold_out
+                      ? "Sold out"
+                      : tier.remaining == null
+                      ? "Unlimited backers"
+                      : `${Number(tier.remaining).toLocaleString()} remaining`}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div style={styles.card}>
         <div style={styles.amounts}>
@@ -2252,6 +2301,7 @@ export default function Campaign() {
       {showModal && (
         <ContributeModal
           campaign={campaign}
+          tiers={tiers}
           guestFreighterMode={freighterGuestMode}
           onClose={() => {
             setShowModal(false);
